@@ -1,0 +1,5 @@
+{
+	"registry": "pulcy",
+	"image": "correlation",
+	"tag-latest": true
+}
