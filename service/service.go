@@ -264,7 +264,14 @@ func (s *Service) updateSyncthing() error {
 
 // generateConfig calls syncthing to generate a configuration file.
 func (s *Service) generateConfig() error {
-	cmd := exec.Command(s.SyncthingPath, "-generate", "-home", s.ConfigDir)
+	args := []string{
+		"-generate",
+		"-home=" + s.ConfigDir,
+		"-no-browser",
+		"-gui-apikey=" + s.apiKey,
+		"-gui-address=" + fmt.Sprintf(":%d", s.HttpPort),
+	}
+	cmd := exec.Command(s.SyncthingPath, args...)
 	cmd.Stdin = bytes.NewReader([]byte{})
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
