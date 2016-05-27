@@ -20,6 +20,8 @@ It uses syncthing to synchronize files and ETCD to find others that want to sync
 | --gui-password   | Password used to access the syncthing GUI |
 | --rescan-interval| Time between scans of the sync-dir |
 | --master         | If set my folder will be considered the master and will not receive updates from others |
+| --docker-endpoint| If set, contains endpoint where to reach docker. (defaults to unix:///var/run/docker.sock) |
+| --container      | Name of the container running this process. Use to set announce-ip & announce-port |
 
 Example:
 ```
@@ -32,4 +34,16 @@ docker run -it -p 5812:5812 -p 5808:5808 \
     --sync-port=5808 \
     --sync-dir=/sync \
     --config-dir=/config
+```
+
+```
+docker run -it -P \
+    -v /var/lib/test1:/sync -v /var/lib/test1-cfg:/config -v /var/run/docker.sock:/var/run/docker.sock \
+    --name=test1 --rm \
+    correlation \
+    --etcd-addr=http://${HOSTIP}:4001/pulcy/correlation/myfolder \
+    --announce-ip=${HOSTIP} \
+    --sync-dir=/sync \
+    --config-dir=/config
+    --container=test1
 ```

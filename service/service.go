@@ -47,8 +47,10 @@ type ServiceConfig struct {
 	SyncPort int // Port number for syncthing to listen on
 	HttpPort int // Port number for syncthing GUI & REST API to listen on
 
-	AnnounceIP   string // IP address on which I'm reachable
-	AnnouncePort int    // Port number on which I'm reachable
+	DockerEndpoint string // If set, fetches the announce IP & port from docker
+	ContainerID    string // If set, fetches the announce IP & port from docker
+	AnnounceIP     string // IP address on which I'm reachable
+	AnnouncePort   int    // Port number on which I'm reachable
 
 	SyncthingPath string // Full path of syncthing binary
 	SyncDir       string // Full path of directory to synchronize
@@ -79,6 +81,14 @@ type Service struct {
 
 // NewService creates a new service instance.
 func NewService(config ServiceConfig, deps ServiceDependencies) (*Service, error) {
+	// Apply defaults
+	if config.AnnouncePort == 0 {
+		config.AnnouncePort = config.SyncPort
+	}
+	if config.SyncthingPath == "" {
+		config.SyncthingPath = "/app/syncthing"
+	}
+	// Check input
 	if config.AnnounceIP == "" {
 		return nil, maskAny(fmt.Errorf("AnnounceIP is empty"))
 	}
@@ -90,9 +100,6 @@ func NewService(config ServiceConfig, deps ServiceDependencies) (*Service, error
 	}
 	if config.ConfigDir == "" {
 		return nil, maskAny(fmt.Errorf("ConfigDir is empty"))
-	}
-	if config.SyncthingPath == "" {
-		config.SyncthingPath = "/app/syncthing"
 	}
 	apiKey := uniuri.New()
 	syncClient := syncthing.NewClient(syncthing.ClientConfig{

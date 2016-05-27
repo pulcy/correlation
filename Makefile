@@ -56,6 +56,7 @@ update-vendor:
 	@pulsar go vendor -V $(VENDORDIR) \
 		github.com/coreos/etcd/client \
 		github.com/dchest/uniuri \
+		github.com/fsouza/go-dockerclient \
 		github.com/giantswarm/retry-go \
 		github.com/juju/errgo \
 		github.com/op/go-logging \
@@ -90,5 +91,5 @@ $(SYNCTHING): $(SYNCBUILDDIR)
 		-e CGO_ENABLED=0 \
 		-w /usr/code/src/github.com/syncthing/syncthing \
 		golang:$(GOVERSION) \
-		go run build.go -no-upgrade -version=$(SYNCTHINGVERSION) 
+		go run build.go -no-upgrade -version=$(SYNCTHINGVERSION)
 	cp $(SYNCBUILDDIR)/src/github.com/syncthing/syncthing/bin/syncthing $(BINDIR)

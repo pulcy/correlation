@@ -42,6 +42,7 @@ const (
 	defaultHttpPort       = 5812
 	defaultSyncPort       = 5808
 	defaultRescanInterval = time.Second * 30
+	defaultDockerEndpoint = "unix:///var/run/docker.sock"
 )
 
 type globalOptions struct {
@@ -76,6 +77,8 @@ func init() {
 	cmdMain.Flags().StringVar(&globalFlags.Password, "gui-password", "", "Password for accessing the GUI")
 	cmdMain.Flags().DurationVar(&globalFlags.RescanInterval, "rescan-interval", defaultRescanInterval, "Time between scans of the sync-dir")
 	cmdMain.Flags().BoolVar(&globalFlags.Master, "master", false, "If set my folder will be considered the master and will not receive updates from others")
+	cmdMain.Flags().StringVar(&globalFlags.DockerEndpoint, "docker-endpoint", defaultDockerEndpoint, "Where to access docker")
+	cmdMain.Flags().StringVar(&globalFlags.ContainerID, "container", "", "ID of the containing running this process")
 }
 
 func main() {
@@ -84,9 +87,6 @@ func main() {
 
 func cmdMainRun(cmd *cobra.Command, args []string) {
 	// Parse arguments
-	if globalFlags.AnnouncePort == 0 {
-		globalFlags.AnnouncePort = globalFlags.SyncPort
-	}
 	if globalFlags.etcdAddr == "" {
 		Exitf("Please specify --etcd-addr")
 	}
@@ -108,8 +108,14 @@ func cmdMainRun(cmd *cobra.Command, args []string) {
 		Exitf("Failed to create backend: %#v", err)
 	}
 
+	// Update service config (if needed)
+	cfg, err := service.UpdateConfigFromDocker(log, globalFlags.ServiceConfig)
+	if err != nil {
+		Exitf("Failed to update configuration from docker: %#v", err)
+	}
+
 	// Prepare service
-	service, err := service.NewService(globalFlags.ServiceConfig, service.ServiceDependencies{
+	service, err := service.NewService(cfg, service.ServiceDependencies{
 		Logger:  log,
 		Backend: backend,
 	})
