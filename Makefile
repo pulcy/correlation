@@ -6,7 +6,7 @@ COMMIT := $(shell git rev-parse --short HEAD)
 
 GOBUILDDIR := $(SCRIPTDIR)/.gobuild
 SRCDIR := $(SCRIPTDIR)
-BINDIR := $(ROOTDIR)
+BINDIR := $(ROOTDIR)/bin
 VENDORDIR := $(SCRIPTDIR)/deps
 
 ORGPATH := github.com/pulcy
@@ -15,7 +15,10 @@ REPONAME := $(PROJECT)
 REPODIR := $(ORGDIR)/$(REPONAME)
 REPOPATH := $(ORGPATH)/$(REPONAME)
 BIN := $(BINDIR)/$(PROJECT)
+
 SYNCTHING := $(BINDIR)/syncthing
+SYNCTHINGVERSION := v0.13.4
+SYNCBUILDDIR := $(SCRIPTDIR)/.syncbuild
 
 GOPATH := $(GOBUILDDIR)
 GOVERSION := 1.6.2-alpine
@@ -45,7 +48,7 @@ deps:
 $(GOBUILDDIR):
 	@mkdir -p $(ORGDIR)
 	@rm -f $(REPODIR) && ln -s ../../../.. $(REPODIR)
-	@pulsar get https://github.com/syncthing/syncthing.git $(GOBUILDDIR)/src/github.com/syncthing/syncthing/
+	@pulsar get -b $(SYNCTHINGVERSION) https://github.com/syncthing/syncthing.git $(GOBUILDDIR)/src/github.com/syncthing/syncthing/
 	@GOPATH=$(GOPATH) pulsar go flatten -V $(VENDORDIR)
 
 update-vendor:
@@ -59,6 +62,9 @@ update-vendor:
 		github.com/spf13/cobra \
 		github.com/spf13/pflag
 
+docker: $(BIN) $(SYNCTHING)
+	docker build -t correlation .
+
 $(BIN): $(GOBUILDDIR) $(SOURCES)
 	docker run \
 		--rm \
@@ -69,17 +75,20 @@ $(BIN): $(GOBUILDDIR) $(SOURCES)
 		-e CGO_ENABLED=0 \
 		-w /usr/code/ \
 		golang:$(GOVERSION) \
-		go build -a -installsuffix netgo -tags netgo -ldflags "-X main.projectVersion=$(VERSION) -X main.projectBuild=$(COMMIT)" -o /usr/code/$(PROJECT) $(REPOPATH)
+		go build -a -installsuffix netgo -tags netgo -ldflags "-X main.projectVersion=$(VERSION) -X main.projectBuild=$(COMMIT)" -o /usr/code/bin/$(PROJECT) $(REPOPATH)
 
-$(SYNCTHING): $(GOBUILDDIR)
+$(SYNCBUILDDIR):
+	@pulsar get -b $(SYNCTHINGVERSION) https://github.com/syncthing/syncthing.git $(SYNCBUILDDIR)/src/github.com/syncthing/syncthing/
+
+$(SYNCTHING): $(SYNCBUILDDIR)
 	docker run \
 		--rm \
-		-v $(GOBUILDDIR):/usr/code \
+		-v $(SYNCBUILDDIR):/usr/code \
 		-e GOPATH=/usr/code/ \
 		-e GOOS=$(GOOS) \
 		-e GOARCH=$(GOARCH) \
 		-e CGO_ENABLED=0 \
 		-w /usr/code/src/github.com/syncthing/syncthing \
 		golang:$(GOVERSION) \
-		go run build.go
-	cp $(GOBUILDDIR)/src/github.com/syncthing/syncthing/bin/syncthing .
+		go run build.go -no-upgrade -version=$(SYNCTHINGVERSION) 
+	cp $(SYNCBUILDDIR)/src/github.com/syncthing/syncthing/bin/syncthing $(BINDIR)

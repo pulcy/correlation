@@ -17,9 +17,11 @@ package service
 import (
 	"bytes"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -34,22 +36,27 @@ import (
 )
 
 const (
-	osExitDelay      = time.Second * 3
-	confPerm         = os.FileMode(0664) // rw-rw-r
-	refreshDelay     = time.Millisecond * 250
-	syncthingAddress = "http://127.0.0.1:2231"
-	rescanIntervalS  = 30
-	folderID         = "1338de53-f75a-4164-b769-dd62c1273717"
-	folderLabel      = "sync-dir"
+	osExitDelay     = time.Second * 3
+	confPerm        = os.FileMode(0664) // rw-rw-r
+	refreshDelay    = time.Millisecond * 250
+	rescanIntervalS = 30
+	folderID        = "1338de53-f75a-4164-b769-dd62c1273717"
+	folderLabel     = "sync-dir"
 )
 
 type ServiceConfig struct {
-	LocalIP   string // IP address on which I'm reachable
-	LocalPort int    // Port number on which I'm reachable
+	SyncPort int // Port number for syncthing to listen on
+	HttpPort int // Port number for syncthing GUI & REST API to listen on
+
+	AnnounceIP   string // IP address on which I'm reachable
+	AnnouncePort int    // Port number on which I'm reachable
 
 	SyncthingPath string // Full path of syncthing binary
 	SyncDir       string // Full path of directory to synchronize
 	ConfigDir     string // Full path of directory to use as home/configuration directory
+
+	User     string // User for GUI access
+	Password string // Password for GUI access
 }
 
 type ServiceDependencies struct {
@@ -62,21 +69,32 @@ type Service struct {
 	ServiceDependencies
 
 	signalCounter uint32
-	lastConfig    string
-	lastPid       int
+	lastDevices   string
 	changeCounter uint32
 	apiKey        string
 	syncClient    *syncthing.Client
 }
 
 // NewService creates a new service instance.
-func NewService(config ServiceConfig, deps ServiceDependencies) *Service {
+func NewService(config ServiceConfig, deps ServiceDependencies) (*Service, error) {
+	if config.AnnounceIP == "" {
+		return nil, maskAny(fmt.Errorf("AnnounceIP is empty"))
+	}
+	if config.AnnouncePort == 0 {
+		return nil, maskAny(fmt.Errorf("AnnouncePort is 0"))
+	}
+	if config.SyncDir == "" {
+		return nil, maskAny(fmt.Errorf("SyncDir is empty"))
+	}
+	if config.ConfigDir == "" {
+		return nil, maskAny(fmt.Errorf("ConfigDir is empty"))
+	}
 	if config.SyncthingPath == "" {
 		config.SyncthingPath = "/app/syncthing"
 	}
 	apiKey := uniuri.New()
 	syncClient := syncthing.NewClient(syncthing.ClientConfig{
-		Endpoint:           syncthingAddress,
+		Endpoint:           fmt.Sprintf("http://127.0.0.1:%d", config.HttpPort),
 		APIKey:             apiKey,
 		InsecureSkipVerify: false,
 	})
@@ -85,7 +103,7 @@ func NewService(config ServiceConfig, deps ServiceDependencies) *Service {
 		ServiceDependencies: deps,
 		apiKey:              apiKey,
 		syncClient:          syncClient,
-	}
+	}, nil
 }
 
 // Run starts the service and waits for OS signals to terminate it.
@@ -96,6 +114,13 @@ func (s *Service) Run() error {
 
 	// Run syncthing
 	go s.runSyncthing()
+
+	// Fetch my device ID
+	deviceID := s.getLocalDeviceID()
+
+	// Announce us in the backend
+	announceAddress := net.JoinHostPort(s.AnnounceIP, strconv.Itoa(s.AnnouncePort))
+	s.Backend.Announce(deviceID, announceAddress)
 
 	// Start monitoring the backend
 	go s.backendMonitorLoop()
@@ -113,13 +138,28 @@ func (s *Service) Run() error {
 	return nil
 }
 
+// getLocalDeviceID fetched the device ID of the local syncthing instance.
+// It waits until it gets a successful response.
+func (s *Service) getLocalDeviceID() string {
+	for {
+		id, err := s.syncClient.GetMyID()
+		if err == nil && id != "" {
+			return id
+		}
+		fmt.Print(".")
+		time.Sleep(time.Millisecond * 250)
+	}
+}
+
 // configLoop updates the haproxy config, and then waits
 // for changes in the backend.
 func (s *Service) configLoop() {
 	var lastChangeCounter uint32
 	for {
 		currentChangeCounter := atomic.LoadUint32(&s.changeCounter)
-		if currentChangeCounter > lastChangeCounter {
+		signalCounter := atomic.LoadUint32(&s.signalCounter)
+
+		if currentChangeCounter > lastChangeCounter && signalCounter == 0 {
 			if err := s.updateSyncthing(); err != nil {
 				s.Logger.Errorf("Failed to update syncthing: %#v", err)
 			} else {
@@ -162,6 +202,11 @@ func (s *Service) updateSyncthing() error {
 	if err != nil {
 		return maskAny(err)
 	}
+	devicesString := devices.FullString()
+	if devicesString == s.lastDevices {
+		// No update needed
+		return nil
+	}
 
 	// Update config
 	fld := config.FolderConfiguration{
@@ -171,6 +216,13 @@ func (s *Service) updateSyncthing() error {
 		Type:            config.FolderTypeReadWrite,
 		RescanIntervalS: rescanIntervalS,
 	}
+	scheme := "tcp"
+	cfg.GUI.RawAddress = fmt.Sprintf("0.0.0.0:%d", s.HttpPort)
+	cfg.GUI.RawUseTLS = false
+	cfg.GUI.APIKey = s.apiKey
+	cfg.GUI.User = s.User
+	cfg.GUI.Password = s.Password
+	cfg.Options.ListenAddresses = []string{fmt.Sprintf("tcp://:%d", s.SyncPort)}
 	cfg.Devices = []config.DeviceConfiguration{}
 	for _, dr := range devices {
 		devID, err := protocol.DeviceIDFromString(dr.ID)
@@ -180,7 +232,7 @@ func (s *Service) updateSyncthing() error {
 		dev := config.DeviceConfiguration{
 			DeviceID:    devID,
 			Name:        dr.ID,
-			Addresses:   []string{fmt.Sprintf("%s:%d", dr.IP, dr.Port)},
+			Addresses:   []string{fmt.Sprintf("%s://%s:%d", scheme, dr.IP, dr.Port)},
 			Compression: protocol.CompressAlways,
 		}
 		cfg.Devices = append(cfg.Devices, dev)
@@ -192,8 +244,12 @@ func (s *Service) updateSyncthing() error {
 	if err := s.syncClient.SetConfig(cfg); err != nil {
 		return maskAny(err)
 	}
+	if err := s.syncClient.Restart(); err != nil {
+		return maskAny(err)
+	}
 
 	s.Logger.Info("Updated syncthing")
+	s.lastDevices = devicesString
 
 	return nil
 }
@@ -213,12 +269,12 @@ func (s *Service) generateConfig() error {
 }
 
 // runSyncthing runs syncthing for normal operations
-func (s *Service) runSyncthing() error {
+func (s *Service) runSyncthing_() error {
 	args := []string{
 		"-home=" + s.ConfigDir,
 		"-no-browser",
-		"-no-restart",
 		"-gui-apikey=" + s.apiKey,
+		"-gui-address=" + fmt.Sprintf("0.0.0.0:%d", s.HttpPort),
 	}
 
 	s.Logger.Debugf("Starting syncthing with %#v", args)
@@ -247,6 +303,9 @@ func (s *Service) close() {
 	if atomic.AddUint32(&s.signalCounter, 1) >= 2 {
 		s.exitProcess()
 	}
+
+	// Shutdown syncthing
+	go s.syncClient.Shutdown()
 
 	s.Logger.Infof("shutting down server in %s", osExitDelay.String())
 	time.Sleep(osExitDelay)

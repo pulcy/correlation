@@ -26,6 +26,9 @@ type Backend interface {
 
 	// Load all registered devices
 	Get() (DeviceRegistrations, error)
+
+	// Announce the given device that can be found at the given address
+	Announce(deviceID, address string)
 }
 
 type DeviceRegistration struct {

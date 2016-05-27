@@ -20,6 +20,8 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/coreos/etcd/client"
 	"github.com/op/go-logging"
@@ -30,12 +32,20 @@ const (
 	recentWatchErrorsMax = 5
 )
 
+var (
+	announceTTL = time.Second * 60
+)
+
 type etcdBackend struct {
 	client            client.Client
 	watcher           client.Watcher
 	Logger            *logging.Logger
 	devicesKey        string
 	recentWatchErrors int
+	announceMutex     sync.Mutex
+	announceStarted   bool
+	announceDeviceID  string
+	announceAddress   string
 }
 
 func NewEtcdBackend(logger *logging.Logger, uri *url.URL) (Backend, error) {
@@ -88,6 +98,58 @@ func (eb *etcdBackend) Get() (DeviceRegistrations, error) {
 		return nil, maskAny(err)
 	}
 	return devices, nil
+}
+
+// Announce the given device that can be found at the given address
+func (eb *etcdBackend) Announce(deviceID, address string) {
+	eb.announceMutex.Lock()
+	defer eb.announceMutex.Unlock()
+	eb.announceDeviceID = deviceID
+	eb.announceAddress = address
+
+	if deviceID == "" || address == "" {
+		return
+	}
+
+	if !eb.announceStarted {
+		go eb.announceLoop()
+		eb.announceStarted = true
+	}
+}
+
+// announceLoop keeps updating our announcement
+func (eb *etcdBackend) announceLoop() error {
+	for {
+		if err := eb.updateAnnounce(); err != nil {
+			eb.Logger.Warningf("Update announce failed: %#v", err)
+			time.Sleep(time.Second)
+		} else {
+			time.Sleep(announceTTL / 2)
+		}
+	}
+}
+
+// Announce the configured device that can be found at the configured address
+func (eb *etcdBackend) updateAnnounce() error {
+	eb.announceMutex.Lock()
+	defer eb.announceMutex.Unlock()
+	deviceID := eb.announceDeviceID
+	address := eb.announceAddress
+
+	if deviceID == "" || address == "" {
+		return nil
+	}
+
+	keysAPI := client.NewKeysAPI(eb.client)
+	options := &client.SetOptions{
+		TTL: announceTTL,
+	}
+	key := path.Join(eb.devicesKey, deviceID)
+	_, err := keysAPI.Set(context.Background(), key, address, options)
+	if err != nil {
+		return maskAny(err)
+	}
+	return nil
 }
 
 // Load all registered devices

@@ -38,6 +38,8 @@ var (
 const (
 	projectName     = "correlation"
 	defaultLogLevel = "debug"
+	defaultHttpPort = 5812
+	defaultSyncPort = 5808
 )
 
 type globalOptions struct {
@@ -48,9 +50,8 @@ type globalOptions struct {
 
 var (
 	cmdMain = &cobra.Command{
-		Use:              projectName,
-		Run:              cmdMainRun,
-		PersistentPreRun: func(*cobra.Command, []string) { setLogLevel(globalFlags.logLevel) },
+		Use: projectName,
+		Run: cmdMainRun,
 	}
 	globalFlags globalOptions
 	log         = logging.MustGetLogger(projectName)
@@ -59,14 +60,18 @@ var (
 func init() {
 	logging.SetFormatter(logging.MustStringFormatter("[%{level:-5s}] %{message}"))
 
-	cmdMain.Flags().StringVar(&globalFlags.logLevel, "log-level", "", "Minimum log level (debug|info|warning|error)")
+	cmdMain.Flags().StringVar(&globalFlags.logLevel, "log-level", defaultLogLevel, "Minimum log level (debug|info|warning|error)")
 	cmdMain.Flags().StringVar(&globalFlags.etcdAddr, "etcd-addr", "", "Address of etcd backend")
 
-	cmdMain.Flags().StringVar(&globalFlags.LocalIP, "local-ip", "", "Local IP address")
-	cmdMain.Flags().IntVar(&globalFlags.LocalPort, "local-port", 0, "Local port")
+	cmdMain.Flags().IntVar(&globalFlags.SyncPort, "sync-port", defaultSyncPort, "Port for syncthing to listen on")
+	cmdMain.Flags().IntVar(&globalFlags.HttpPort, "http-port", defaultHttpPort, "Port for syncthing's GUI & REST to listen on")
+	cmdMain.Flags().StringVar(&globalFlags.AnnounceIP, "announce-ip", "", "IP address to announce to other instances")
+	cmdMain.Flags().IntVar(&globalFlags.AnnouncePort, "announce-port", 0, "Port to announce to other instances")
 	cmdMain.Flags().StringVar(&globalFlags.SyncthingPath, "syncthing-path", "", "Path of syncthing")
 	cmdMain.Flags().StringVar(&globalFlags.SyncDir, "sync-dir", "", "Path of the directory to synchronize")
 	cmdMain.Flags().StringVar(&globalFlags.ConfigDir, "config-dir", "", "Path of the directory containing the configuration")
+	cmdMain.Flags().StringVar(&globalFlags.User, "gui-user", "", "Username for accessing the GUI")
+	cmdMain.Flags().StringVar(&globalFlags.Password, "gui-password", "", "Password for accessing the GUI")
 }
 
 func main() {
@@ -75,6 +80,9 @@ func main() {
 
 func cmdMainRun(cmd *cobra.Command, args []string) {
 	// Parse arguments
+	if globalFlags.AnnouncePort == 0 {
+		globalFlags.AnnouncePort = globalFlags.SyncPort
+	}
 	if globalFlags.etcdAddr == "" {
 		Exitf("Please specify --etcd-addr")
 	}
@@ -93,14 +101,17 @@ func cmdMainRun(cmd *cobra.Command, args []string) {
 	// Prepare backend
 	backend, err := backend.NewEtcdBackend(log, etcdUrl)
 	if err != nil {
-		Exitf("Failed to backend: %#v", err)
+		Exitf("Failed to create backend: %#v", err)
 	}
 
 	// Prepare service
-	service := service.NewService(globalFlags.ServiceConfig, service.ServiceDependencies{
+	service, err := service.NewService(globalFlags.ServiceConfig, service.ServiceDependencies{
 		Logger:  log,
 		Backend: backend,
 	})
+	if err != nil {
+		Exitf("Failed to create service: %#v", err)
+	}
 
 	service.Run()
 }
