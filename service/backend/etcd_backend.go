@@ -117,6 +117,25 @@ func (eb *etcdBackend) Announce(deviceID, address string) {
 	}
 }
 
+// UnAnnounce removes the current announcement
+func (eb *etcdBackend) UnAnnounce() {
+	eb.announceMutex.Lock()
+	defer eb.announceMutex.Unlock()
+	deviceID := eb.announceDeviceID
+	eb.announceDeviceID = ""
+	eb.announceAddress = ""
+
+	if deviceID != "" {
+		keysAPI := client.NewKeysAPI(eb.client)
+		key := path.Join(eb.devicesKey, deviceID)
+		eb.Logger.Debugf("Removing device announcements at '%s'", key)
+		_, err := keysAPI.Delete(context.Background(), key, nil)
+		if err != nil {
+			eb.Logger.Warningf("Failed to delete %s key: %#v", key, err)
+		}
+	}
+}
+
 // announceLoop keeps updating our announcement
 func (eb *etcdBackend) announceLoop() error {
 	for {

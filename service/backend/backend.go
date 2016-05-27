@@ -29,6 +29,9 @@ type Backend interface {
 
 	// Announce the given device that can be found at the given address
 	Announce(deviceID, address string)
+
+	// UnAnnounce removes the current announcement
+	UnAnnounce()
 }
 
 type DeviceRegistration struct {

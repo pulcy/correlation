@@ -312,6 +312,9 @@ func (s *Service) close() {
 		s.exitProcess()
 	}
 
+	// Remove announcement
+	s.Backend.UnAnnounce()
+
 	// Shutdown syncthing
 	go s.syncClient.Shutdown()
 
