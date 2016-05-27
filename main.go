@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/juju/errgo"
 	"github.com/op/go-logging"
@@ -36,10 +37,11 @@ var (
 )
 
 const (
-	projectName     = "correlation"
-	defaultLogLevel = "debug"
-	defaultHttpPort = 5812
-	defaultSyncPort = 5808
+	projectName           = "correlation"
+	defaultLogLevel       = "debug"
+	defaultHttpPort       = 5812
+	defaultSyncPort       = 5808
+	defaultRescanInterval = time.Second * 30
 )
 
 type globalOptions struct {
@@ -72,6 +74,7 @@ func init() {
 	cmdMain.Flags().StringVar(&globalFlags.ConfigDir, "config-dir", "", "Path of the directory containing the configuration")
 	cmdMain.Flags().StringVar(&globalFlags.User, "gui-user", "", "Username for accessing the GUI")
 	cmdMain.Flags().StringVar(&globalFlags.Password, "gui-password", "", "Password for accessing the GUI")
+	cmdMain.Flags().DurationVar(&globalFlags.RescanInterval, "rescan-interval", defaultRescanInterval, "Time between scans of the sync-dir")
 }
 
 func main() {

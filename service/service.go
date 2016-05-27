@@ -36,12 +36,11 @@ import (
 )
 
 const (
-	osExitDelay     = time.Second * 3
-	confPerm        = os.FileMode(0664) // rw-rw-r
-	refreshDelay    = time.Millisecond * 250
-	rescanIntervalS = 30
-	folderID        = "1338de53-f75a-4164-b769-dd62c1273717"
-	folderLabel     = "sync-dir"
+	osExitDelay  = time.Second * 3
+	confPerm     = os.FileMode(0664) // rw-rw-r
+	refreshDelay = time.Millisecond * 250
+	folderID     = "1338de53-f75a-4164-b769-dd62c1273717"
+	folderLabel  = "sync-dir"
 )
 
 type ServiceConfig struct {
@@ -54,6 +53,8 @@ type ServiceConfig struct {
 	SyncthingPath string // Full path of syncthing binary
 	SyncDir       string // Full path of directory to synchronize
 	ConfigDir     string // Full path of directory to use as home/configuration directory
+
+	RescanInterval time.Duration // Amount of time bewteen scans
 
 	User     string // User for GUI access
 	Password string // Password for GUI access
@@ -214,15 +215,22 @@ func (s *Service) updateSyncthing() error {
 		Label:           folderLabel,
 		RawPath:         s.SyncDir,
 		Type:            config.FolderTypeReadWrite,
-		RescanIntervalS: rescanIntervalS,
+		RescanIntervalS: (int)(s.RescanInterval.Seconds()),
 	}
 	scheme := "tcp"
-	cfg.GUI.RawAddress = fmt.Sprintf("0.0.0.0:%d", s.HttpPort)
+	cfg.GUI.RawAddress = fmt.Sprintf(":%d", s.HttpPort)
 	cfg.GUI.RawUseTLS = false
 	cfg.GUI.APIKey = s.apiKey
 	cfg.GUI.User = s.User
 	cfg.GUI.Password = s.Password
 	cfg.Options.ListenAddresses = []string{fmt.Sprintf("tcp://:%d", s.SyncPort)}
+	cfg.Options.GlobalAnnEnabled = false
+	cfg.Options.GlobalAnnServers = []string{}
+	cfg.Options.LocalAnnEnabled = false
+	cfg.Options.NATEnabled = false
+	cfg.Options.RelaysEnabled = false
+	cfg.Options.StartBrowser = false
+	cfg.Options.URAccepted = -1 // -1 for off (permanently)
 	cfg.Devices = []config.DeviceConfiguration{}
 	for _, dr := range devices {
 		devID, err := protocol.DeviceIDFromString(dr.ID)
@@ -269,12 +277,12 @@ func (s *Service) generateConfig() error {
 }
 
 // runSyncthing runs syncthing for normal operations
-func (s *Service) runSyncthing_() error {
+func (s *Service) runSyncthing() error {
 	args := []string{
 		"-home=" + s.ConfigDir,
 		"-no-browser",
 		"-gui-apikey=" + s.apiKey,
-		"-gui-address=" + fmt.Sprintf("0.0.0.0:%d", s.HttpPort),
+		"-gui-address=" + fmt.Sprintf(":%d", s.HttpPort),
 	}
 
 	s.Logger.Debugf("Starting syncthing with %#v", args)

@@ -18,3 +18,16 @@ It uses syncthing to synchronize files and ETCD to find others that want to sync
 | --config-dir     | Full path of the folder to store the synchronization database & config files in |
 | --gui-user       | Username used to access the syncthing GUI |
 | --gui-password   | Password used to access the syncthing GUI |
+
+Example:
+```
+docker run -it -p 5812:5812 -p 5808:5808 \
+    -v /var/lib/test1:/sync -v /var/lib/test1-cfg:/config \
+    correlation \
+    --etcd-addr=http://${HOSTIP}:4001/pulcy/correlation/myfolder \
+    --announce-ip=${HOSTIP} \
+    --http-port=5812 \
+    --sync-port=5808 \
+    --sync-dir=/sync \
+    --config-dir=/config
+```
