@@ -5,7 +5,6 @@ It uses syncthing to synchronize files and ETCD to find others that want to sync
 
 ## Usage
 
-|------------------|-----------------|
 | Flags            | Description     |
 |------------------|-----------------|
 | --log-level      | Minimum log level (debug|info|warning|error) |
@@ -19,4 +18,3 @@ It uses syncthing to synchronize files and ETCD to find others that want to sync
 | --config-dir     | Full path of the folder to store the synchronization database & config files in |
 | --gui-user       | Username used to access the syncthing GUI |
 | --gui-password   | Password used to access the syncthing GUI |
-|------------------|-----------------|
