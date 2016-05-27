@@ -53,6 +53,7 @@ type ServiceConfig struct {
 	SyncthingPath string // Full path of syncthing binary
 	SyncDir       string // Full path of directory to synchronize
 	ConfigDir     string // Full path of directory to use as home/configuration directory
+	Master        bool   // If set, my folder will be readonly and not accept changes from others
 
 	RescanInterval time.Duration // Amount of time bewteen scans
 
@@ -216,6 +217,9 @@ func (s *Service) updateSyncthing() error {
 		RawPath:         s.SyncDir,
 		Type:            config.FolderTypeReadWrite,
 		RescanIntervalS: (int)(s.RescanInterval.Seconds()),
+	}
+	if s.Master {
+		fld.Type = config.FolderTypeReadOnly
 	}
 	scheme := "tcp"
 	cfg.GUI.RawAddress = fmt.Sprintf(":%d", s.HttpPort)

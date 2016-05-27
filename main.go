@@ -75,6 +75,7 @@ func init() {
 	cmdMain.Flags().StringVar(&globalFlags.User, "gui-user", "", "Username for accessing the GUI")
 	cmdMain.Flags().StringVar(&globalFlags.Password, "gui-password", "", "Password for accessing the GUI")
 	cmdMain.Flags().DurationVar(&globalFlags.RescanInterval, "rescan-interval", defaultRescanInterval, "Time between scans of the sync-dir")
+	cmdMain.Flags().BoolVar(&globalFlags.Master, "master", false, "If set my folder will be considered the master and will not receive updates from others")
 }
 
 func main() {

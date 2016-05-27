@@ -18,6 +18,8 @@ It uses syncthing to synchronize files and ETCD to find others that want to sync
 | --config-dir     | Full path of the folder to store the synchronization database & config files in |
 | --gui-user       | Username used to access the syncthing GUI |
 | --gui-password   | Password used to access the syncthing GUI |
+| --rescan-interval| Time between scans of the sync-dir |
+| --master         | If set my folder will be considered the master and will not receive updates from others |
 
 Example:
 ```
