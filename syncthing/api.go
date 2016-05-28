@@ -2,9 +2,21 @@ package syncthing
 
 import (
 	"encoding/json"
+	"io/ioutil"
+	"net/url"
+	"strconv"
+	"time"
 
 	"github.com/syncthing/syncthing/lib/config"
 )
+
+// Event holds full event data coming from Syncthing REST API
+type Event struct {
+	ID   int         `json:"id"`
+	Time time.Time   `json:"time"`
+	Type string      `json:"type"`
+	Data interface{} `json:"data"`
+}
 
 // GetMyID loads the ID of the current device
 func (c *Client) GetMyID() (string, error) {
@@ -66,4 +78,45 @@ func (c *Client) Shutdown() error {
 		return maskAny(err)
 	}
 	return nil
+}
+
+// Scan causes Syncthing to scan the folder with given ID.
+func (c *Client) Scan(folderID string, subs []string, delayScan time.Duration) error {
+	data := url.Values{}
+	data.Set("folder", folderID)
+	for _, sub := range subs {
+		data.Add("sub", sub)
+	}
+	delayScanS := (int)(delayScan.Seconds())
+	if delayScanS > 0 {
+		data.Set("next", strconv.Itoa(delayScanS))
+	}
+	resp, err := c.httpPost("db/scan?"+data.Encode(), "")
+	if err != nil {
+		return maskAny(err)
+	}
+	// Wait until scan finishes
+	defer resp.Body.Close()
+	_, err = ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return maskAny(err)
+	}
+	return nil
+}
+
+// GetEvents returns a list of events which happened in Syncthing since lastSeenID.
+func (c *Client) GetEvents(lastSeenID int) ([]Event, error) {
+	resp, err := c.httpGet("/events?since=" + strconv.Itoa(lastSeenID))
+	if err != nil {
+		return nil, maskAny(err)
+	}
+	raw, err := responseToBArray(resp)
+	if err != nil {
+		return nil, maskAny(err)
+	}
+	var events []Event
+	if err := json.Unmarshal(raw, &events); err != nil {
+		return nil, maskAny(err)
+	}
+	return events, nil
 }

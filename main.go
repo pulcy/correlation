@@ -79,6 +79,7 @@ func init() {
 	cmdMain.Flags().BoolVar(&globalFlags.Master, "master", false, "If set my folder will be considered the master and will not receive updates from others")
 	cmdMain.Flags().StringVar(&globalFlags.DockerEndpoint, "docker-endpoint", defaultDockerEndpoint, "Where to access docker")
 	cmdMain.Flags().StringVar(&globalFlags.ContainerID, "container", "", "ID of the containing running this process")
+	cmdMain.Flags().BoolVar(&globalFlags.UseWatcher, "watcher", false, "If set, starts a watcher to look for filesystem changes for faster synchronization")
 }
 
 func main() {

@@ -54,6 +54,7 @@ $(GOBUILDDIR):
 update-vendor:
 	@rm -Rf $(VENDORDIR)
 	@pulsar go vendor -V $(VENDORDIR) \
+		github.com/cenkalti/backoff \
 		github.com/coreos/etcd/client \
 		github.com/dchest/uniuri \
 		github.com/fsouza/go-dockerclient \
@@ -61,7 +62,8 @@ update-vendor:
 		github.com/juju/errgo \
 		github.com/op/go-logging \
 		github.com/spf13/cobra \
-		github.com/spf13/pflag
+		github.com/spf13/pflag \
+		github.com/zillode/notify
 
 docker: $(BIN) $(SYNCTHING)
 	docker build -t correlation .
