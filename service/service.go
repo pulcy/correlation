@@ -58,7 +58,7 @@ type ServiceConfig struct {
 	Master        bool   // If set, my folder will be readonly and not accept changes from others
 
 	RescanInterval time.Duration // Amount of time bewteen scans
-	UseWatcher     bool
+	NoWatcher      bool          // If set, no watcher will be launched.
 
 	User     string // User for GUI access
 	Password string // Password for GUI access
@@ -117,7 +117,7 @@ func NewService(config ServiceConfig, deps ServiceDependencies) (*Service, error
 		APIKey:             apiKey,
 		InsecureSkipVerify: false,
 	})
-	if config.UseWatcher {
+	if !config.NoWatcher {
 		s.watcher = NewWatcher(deps.Logger, s.syncClient, folderID, config.SyncDir)
 	}
 	return s, nil
@@ -144,7 +144,7 @@ func (s *Service) Run() error {
 	go s.configLoop()
 
 	// Watch for changes
-	if s.UseWatcher {
+	if s.watcher != nil {
 		go s.watcher.Run()
 	}
 
