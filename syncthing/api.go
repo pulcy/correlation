@@ -1,10 +1,36 @@
+// Copyright (c) 2016 Pulcy.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package syncthing
 
 import (
 	"encoding/json"
+	"io/ioutil"
+	"net/url"
+	"strconv"
+	"time"
 
 	"github.com/syncthing/syncthing/lib/config"
 )
+
+// Event holds full event data coming from Syncthing REST API
+type Event struct {
+	ID   int         `json:"id"`
+	Time time.Time   `json:"time"`
+	Type string      `json:"type"`
+	Data interface{} `json:"data"`
+}
 
 // GetMyID loads the ID of the current device
 func (c *Client) GetMyID() (string, error) {
@@ -52,6 +78,23 @@ func (c *Client) SetConfig(cfg config.Configuration) error {
 	return nil
 }
 
+// IsConfigInSync returns true when the config is in sync, i.e. whether the running configuration is the same as that on disk.
+func (c *Client) IsConfigInSync() (bool, error) {
+	response, err := c.httpGet("system/config/insync")
+	if err != nil {
+		return false, maskAny(err)
+	}
+	raw, err := responseToBArray(response)
+	if err != nil {
+		return false, maskAny(err)
+	}
+	data := make(map[string]interface{})
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return false, maskAny(err)
+	}
+	return data["configInSync"].(bool), nil
+}
+
 // Restart causes Syncthing to exit and restart.
 func (c *Client) Restart() error {
 	if _, err := c.httpPost("system/restart", ""); err != nil {
@@ -66,4 +109,45 @@ func (c *Client) Shutdown() error {
 		return maskAny(err)
 	}
 	return nil
+}
+
+// Scan causes Syncthing to scan the folder with given ID.
+func (c *Client) Scan(folderID string, subs []string, delayScan time.Duration) error {
+	data := url.Values{}
+	data.Set("folder", folderID)
+	for _, sub := range subs {
+		data.Add("sub", sub)
+	}
+	delayScanS := (int)(delayScan.Seconds())
+	if delayScanS > 0 {
+		data.Set("next", strconv.Itoa(delayScanS))
+	}
+	resp, err := c.httpPost("db/scan?"+data.Encode(), "")
+	if err != nil {
+		return maskAny(err)
+	}
+	// Wait until scan finishes
+	defer resp.Body.Close()
+	_, err = ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return maskAny(err)
+	}
+	return nil
+}
+
+// GetEvents returns a list of events which happened in Syncthing since lastSeenID.
+func (c *Client) GetEvents(lastSeenID int) ([]Event, error) {
+	resp, err := c.httpGet("events?since=" + strconv.Itoa(lastSeenID))
+	if err != nil {
+		return nil, maskAny(err)
+	}
+	raw, err := responseToBArray(resp)
+	if err != nil {
+		return nil, maskAny(err)
+	}
+	var events []Event
+	if err := json.Unmarshal(raw, &events); err != nil {
+		return nil, maskAny(err)
+	}
+	return events, nil
 }

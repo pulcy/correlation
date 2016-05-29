@@ -22,10 +22,12 @@ import (
 	"os/exec"
 	"os/signal"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/cenkalti/backoff"
 	"github.com/dchest/uniuri"
 	"github.com/op/go-logging"
 	"github.com/syncthing/syncthing/lib/config"
@@ -58,25 +60,29 @@ type ServiceConfig struct {
 	Master        bool   // If set, my folder will be readonly and not accept changes from others
 
 	RescanInterval time.Duration // Amount of time bewteen scans
+	NoWatcher      bool          // If set, no watcher will be launched.
 
 	User     string // User for GUI access
 	Password string // Password for GUI access
 }
 
 type ServiceDependencies struct {
-	Logger  *logging.Logger
-	Backend backend.Backend
+	Logger        *logging.Logger
+	WatcherLogger *logging.Logger
+	Backend       backend.Backend
 }
 
 type Service struct {
 	ServiceConfig
 	ServiceDependencies
 
-	signalCounter uint32
-	lastDevices   string
-	changeCounter uint32
-	apiKey        string
-	syncClient    *syncthing.Client
+	signalCounter  uint32
+	lastDevices    string
+	changeCounter  uint32
+	apiKey         string
+	syncClient     *syncthing.Client
+	watcher        *Watcher
+	watcherRunOnce sync.Once
 }
 
 // NewService creates a new service instance.
@@ -102,33 +108,37 @@ func NewService(config ServiceConfig, deps ServiceDependencies) (*Service, error
 		return nil, maskAny(fmt.Errorf("ConfigDir is empty"))
 	}
 	apiKey := uniuri.New()
-	syncClient := syncthing.NewClient(syncthing.ClientConfig{
+	s := &Service{
+		ServiceConfig:       config,
+		ServiceDependencies: deps,
+		apiKey:              apiKey,
+	}
+	if err := s.generateConfig(); err != nil {
+		return nil, maskAny(err)
+	}
+	s.syncClient = syncthing.NewClient(syncthing.ClientConfig{
 		Endpoint:           fmt.Sprintf("http://127.0.0.1:%d", config.HttpPort),
 		APIKey:             apiKey,
 		InsecureSkipVerify: false,
 	})
-	return &Service{
-		ServiceConfig:       config,
-		ServiceDependencies: deps,
-		apiKey:              apiKey,
-		syncClient:          syncClient,
-	}, nil
+	if !config.NoWatcher {
+		s.watcher = NewWatcher(deps.WatcherLogger, s.syncClient, folderID, config.SyncDir)
+	}
+	return s, nil
 }
 
 // Run starts the service and waits for OS signals to terminate it.
 func (s *Service) Run() error {
-	if err := s.generateConfig(); err != nil {
-		return maskAny(err)
-	}
-
 	// Run syncthing
 	go s.runSyncthing()
 
 	// Fetch my device ID
-	deviceID := s.getLocalDeviceID()
+	s.Logger.Debug("waiting for syncthing to get started")
+	deviceID := s.waitAndGetLocalDeviceID()
 
 	// Announce us in the backend
 	announceAddress := net.JoinHostPort(s.AnnounceIP, strconv.Itoa(s.AnnouncePort))
+	s.Logger.Debugf("announcing me at %s", announceAddress)
 	s.Backend.Announce(deviceID, announceAddress)
 
 	// Start monitoring the backend
@@ -138,25 +148,51 @@ func (s *Service) Run() error {
 	go s.configLoop()
 
 	// Trigger initial update
-	go func() {
-		time.Sleep(time.Millisecond * 100)
-		s.TriggerUpdate()
-	}()
+	s.TriggerUpdate()
+
+	// Wait for incoming signals
 	s.listenSignals()
 
 	return nil
 }
 
-// getLocalDeviceID fetched the device ID of the local syncthing instance.
+// waitAndGetLocalDeviceID fetched the device ID of the local syncthing instance.
 // It waits until it gets a successful response.
-func (s *Service) getLocalDeviceID() string {
-	for {
-		id, err := s.syncClient.GetMyID()
-		if err == nil && id != "" {
-			return id
+func (s *Service) waitAndGetLocalDeviceID() string {
+	var id string
+	op := func() error {
+		var err error
+		id, err = s.syncClient.GetMyID()
+		if err != nil {
+			return maskAny(err)
+		} else if id == "" {
+			return maskAny(fmt.Errorf("id empty"))
 		}
-		fmt.Print(".")
-		time.Sleep(time.Millisecond * 250)
+		return nil
+	}
+	backoff.Retry(op, backoff.NewExponentialBackOff())
+	return id
+}
+
+// waitForConfigInSync waits until the syncthing config is in sync with what is on disk.
+func (s *Service) waitForConfigInSync() {
+	op := func() error {
+		if inSync, err := s.syncClient.IsConfigInSync(); err != nil {
+			return maskAny(err)
+		} else if !inSync {
+			return maskAny(fmt.Errorf("not in sync"))
+		}
+		return nil
+	}
+	backoff.Retry(op, backoff.NewExponentialBackOff())
+}
+
+// runWatcher starts the watcher (if any)
+func (s *Service) runWatcher() {
+	// Watch for changes
+	if s.watcher != nil {
+		s.Logger.Debugf("starting watcher")
+		go s.watcher.Run()
 	}
 }
 
@@ -266,9 +302,14 @@ func (s *Service) updateSyncthing() error {
 	if err := s.syncClient.Restart(); err != nil {
 		return maskAny(err)
 	}
+	s.Logger.Debug("waiting for config to be insync")
+	s.waitForConfigInSync()
 
 	s.Logger.Info("Updated syncthing")
 	s.lastDevices = devicesString
+
+	// Activate watcher (if needed)
+	s.watcherRunOnce.Do(s.runWatcher)
 
 	return nil
 }
@@ -332,6 +373,11 @@ func (s *Service) close() {
 
 	// Remove announcement
 	s.Backend.UnAnnounce()
+
+	// Close watcher (if any)
+	if s.watcher != nil {
+		s.watcher.Close()
+	}
 
 	// Shutdown syncthing
 	go s.syncClient.Shutdown()
