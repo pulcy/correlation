@@ -47,6 +47,9 @@ func (d DeviceRegistration) FullString() string {
 type DeviceRegistrations []DeviceRegistration
 
 func (list DeviceRegistrations) FullString() string {
+	if len(list) == 0 {
+		return ""
+	}
 	slist := []string{}
 	for _, si := range list {
 		slist = append(slist, si.FullString())

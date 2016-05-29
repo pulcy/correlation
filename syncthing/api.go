@@ -64,6 +64,23 @@ func (c *Client) SetConfig(cfg config.Configuration) error {
 	return nil
 }
 
+// IsConfigInSync returns true when the config is in sync, i.e. whether the running configuration is the same as that on disk.
+func (c *Client) IsConfigInSync() (bool, error) {
+	response, err := c.httpGet("system/config/insync")
+	if err != nil {
+		return false, maskAny(err)
+	}
+	raw, err := responseToBArray(response)
+	if err != nil {
+		return false, maskAny(err)
+	}
+	data := make(map[string]interface{})
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return false, maskAny(err)
+	}
+	return data["configInSync"].(bool), nil
+}
+
 // Restart causes Syncthing to exit and restart.
 func (c *Client) Restart() error {
 	if _, err := c.httpPost("system/restart", ""); err != nil {

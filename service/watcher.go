@@ -130,7 +130,7 @@ func (w *Watcher) watchFolder() {
 	defer notify.Stop(c)
 
 	go w.accumulateChanges(debounceTimeout, dirVsFiles)
-	w.log.Infof("Watching %s: %s", w.folderID, w.folderPath)
+	w.log.Infof("Watching %s", w.folderPath)
 	// will we ever get out of this loop?
 	for {
 		evAbsolutePath := w.waitForEvent(c)
@@ -171,7 +171,7 @@ func (w *Watcher) waitForEvent(c chan notify.EventInfo) string {
 
 // informChange sends a request to rescan folder and subs to Syncthing
 func (w *Watcher) informChange(subs []string) error {
-	w.log.Debugf("informing ST: %v: %v", w.folderID, subs)
+	w.log.Debugf("informing ST: %v", subs)
 	if err := w.syncClient.Scan(w.folderID, subs, w.delayScan); err != nil {
 		w.log.Debugf("failed to perform scan request: %#v", err)
 		return maskAny(err)
@@ -195,7 +195,7 @@ func (w *Watcher) accumulateChanges(debounceTimeout time.Duration, dirVsFiles in
 	var delayScanInterval time.Duration
 	if w.delayScan > 0 {
 		delayScanInterval = w.delayScan - (5 * time.Second)
-		w.log.Debugf("delay scan reminder interval for %s set to %.0f seconds", w.folderID, delayScanInterval.Seconds())
+		w.log.Debugf("delay scan reminder interval set to %.0f seconds", delayScanInterval.Seconds())
 	} else {
 		// If delayScan is set to 0, then we never send requests to delay full scans.
 		// "9999 * time.Hour" here is an approximation of "forever".
@@ -465,7 +465,7 @@ func (w *Watcher) watchSTEvents() {
 			}
 
 			// Syncthing probably restarted
-			w.log.Debugf("resetting STEvents: %#v", err)
+			w.log.Debugf("resetting STEvents: %v", err)
 			lastSeenID = 0
 			time.Sleep(configSyncTimeout)
 			continue
