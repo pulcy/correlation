@@ -109,6 +109,9 @@ func NewWatcher(log *logging.Logger, syncClient *syncthing.Client, folderID, fol
 
 // Run starts all gouroutines and waits until a message is in channel stop.
 func (w *Watcher) Run() int {
+	// Attempt to increase the limit on number of open files to the maximum allowed.
+	MaximizeOpenFileLimit()
+
 	go w.watchFolder()
 	go w.watchSTEvents()
 
