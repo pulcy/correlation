@@ -22,6 +22,7 @@ It uses syncthing to synchronize files and ETCD to find others that want to sync
 | --master         | If set my folder will be considered the master and will not receive updates from others |
 | --docker-endpoint| If set, contains endpoint where to reach docker. (defaults to unix:///var/run/docker.sock) |
 | --container      | Name of the container running this process. Use to set announce-ip & announce-port |
+| --no-watcher     | If set, no filesystem watcher is launched and only timer based scanning is used | 
 
 Example:
 ```
