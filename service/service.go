@@ -67,8 +67,9 @@ type ServiceConfig struct {
 }
 
 type ServiceDependencies struct {
-	Logger  *logging.Logger
-	Backend backend.Backend
+	Logger        *logging.Logger
+	WatcherLogger *logging.Logger
+	Backend       backend.Backend
 }
 
 type Service struct {
@@ -121,7 +122,7 @@ func NewService(config ServiceConfig, deps ServiceDependencies) (*Service, error
 		InsecureSkipVerify: false,
 	})
 	if !config.NoWatcher {
-		s.watcher = NewWatcher(deps.Logger, s.syncClient, folderID, config.SyncDir)
+		s.watcher = NewWatcher(deps.WatcherLogger, s.syncClient, folderID, config.SyncDir)
 	}
 	return s, nil
 }

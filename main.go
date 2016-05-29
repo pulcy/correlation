@@ -38,16 +38,24 @@ var (
 
 const (
 	projectName           = "correlation"
-	defaultLogLevel       = "debug"
 	defaultHttpPort       = 5812
 	defaultSyncPort       = 5808
 	defaultRescanInterval = time.Second * 30
 	defaultDockerEndpoint = "unix:///var/run/docker.sock"
+
+	defaultLogLevel        = "debug"
+	defaultWatcherLogLevel = "info"
+	backendLogName         = "service"
+	serviceLogName         = "service"
+	watcherLogName         = "watcher"
 )
 
 type globalOptions struct {
-	logLevel string
-	etcdAddr string
+	logLevel        string
+	backendLogLevel string
+	serviceLogLevel string
+	watcherLogLevel string
+	etcdAddr        string
 	service.ServiceConfig
 }
 
@@ -57,13 +65,15 @@ var (
 		Run: cmdMainRun,
 	}
 	globalFlags globalOptions
-	log         = logging.MustGetLogger(projectName)
 )
 
 func init() {
 	logging.SetFormatter(logging.MustStringFormatter("[%{level:-5s}] %{message}"))
 
 	cmdMain.Flags().StringVar(&globalFlags.logLevel, "log-level", defaultLogLevel, "Minimum log level (debug|info|warning|error)")
+	cmdMain.Flags().StringVar(&globalFlags.backendLogLevel, "backend-log-level", "", "Minimum log level (debug|info|warning|error)")
+	cmdMain.Flags().StringVar(&globalFlags.serviceLogLevel, "service-log-level", "", "Minimum log level (debug|info|warning|error)")
+	cmdMain.Flags().StringVar(&globalFlags.watcherLogLevel, "watcher-log-level", defaultWatcherLogLevel, "Minimum log level for the filesystem watcher (debug|info|warning|error)")
 	cmdMain.Flags().StringVar(&globalFlags.etcdAddr, "etcd-addr", "", "Address of etcd backend")
 
 	cmdMain.Flags().IntVar(&globalFlags.SyncPort, "sync-port", defaultSyncPort, "Port for syncthing to listen on")
@@ -96,29 +106,29 @@ func cmdMainRun(cmd *cobra.Command, args []string) {
 		Exitf("--etcd-addr '%s' is not valid: %#v", globalFlags.etcdAddr, err)
 	}
 
-	// Set log level
-	level, err := logging.LogLevel(globalFlags.logLevel)
-	if err != nil {
-		Exitf("Invalid log-level '%s': %#v", globalFlags.logLevel, err)
-	}
-	logging.SetLevel(level, projectName)
+	// Set log levels
+	setLogLevel(globalFlags.backendLogLevel, globalFlags.logLevel, backendLogName)
+	setLogLevel(globalFlags.serviceLogLevel, globalFlags.logLevel, serviceLogName)
+	setLogLevel(globalFlags.watcherLogLevel, globalFlags.logLevel, watcherLogName)
 
 	// Prepare backend
-	backend, err := backend.NewEtcdBackend(log, etcdUrl)
+	backend, err := backend.NewEtcdBackend(logging.MustGetLogger(backendLogName), etcdUrl)
 	if err != nil {
 		Exitf("Failed to create backend: %#v", err)
 	}
 
 	// Update service config (if needed)
-	cfg, err := service.UpdateConfigFromDocker(log, globalFlags.ServiceConfig)
+	serviceLogger := logging.MustGetLogger(serviceLogName)
+	cfg, err := service.UpdateConfigFromDocker(serviceLogger, globalFlags.ServiceConfig)
 	if err != nil {
 		Exitf("Failed to update configuration from docker: %#v", err)
 	}
 
 	// Prepare service
 	service, err := service.NewService(cfg, service.ServiceDependencies{
-		Logger:  log,
-		Backend: backend,
+		Logger:        serviceLogger,
+		WatcherLogger: logging.MustGetLogger(watcherLogName),
+		Backend:       backend,
 	})
 	if err != nil {
 		Exitf("Failed to create service: %#v", err)
@@ -154,10 +164,13 @@ func assertArgIsSet(arg, argKey string) {
 	}
 }
 
-func setLogLevel(logLevel string) {
+func setLogLevel(logLevel, defaultLogLevel, loggerName string) {
+	if logLevel == "" {
+		logLevel = defaultLogLevel
+	}
 	level, err := logging.LogLevel(logLevel)
 	if err != nil {
 		Exitf("Invalid log-level '%s': %#v", logLevel, err)
 	}
-	logging.SetLevel(level, projectName)
+	logging.SetLevel(level, loggerName)
 }
