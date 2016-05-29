@@ -124,7 +124,9 @@ func cmdMainRun(cmd *cobra.Command, args []string) {
 		Exitf("Failed to create service: %#v", err)
 	}
 
-	service.Run()
+	if err := service.Run(); err != nil {
+		Exitf("Failed to run service: %#v", err)
+	}
 }
 
 func showUsage(cmd *cobra.Command, args []string) {

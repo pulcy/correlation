@@ -128,7 +128,7 @@ func (eb *etcdBackend) UnAnnounce() {
 	if deviceID != "" {
 		keysAPI := client.NewKeysAPI(eb.client)
 		key := path.Join(eb.devicesKey, deviceID)
-		eb.Logger.Debugf("Removing device announcements at '%s'", key)
+		eb.Logger.Debugf("removing device announcements at '%s'", key)
 		_, err := keysAPI.Delete(context.Background(), key, nil)
 		if err != nil {
 			eb.Logger.Warningf("Failed to delete %s key: %#v", key, err)

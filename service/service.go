@@ -104,37 +104,37 @@ func NewService(config ServiceConfig, deps ServiceDependencies) (*Service, error
 		return nil, maskAny(fmt.Errorf("ConfigDir is empty"))
 	}
 	apiKey := uniuri.New()
-	syncClient := syncthing.NewClient(syncthing.ClientConfig{
-		Endpoint:           fmt.Sprintf("http://127.0.0.1:%d", config.HttpPort),
-		APIKey:             apiKey,
-		InsecureSkipVerify: false,
-	})
 	s := &Service{
 		ServiceConfig:       config,
 		ServiceDependencies: deps,
 		apiKey:              apiKey,
-		syncClient:          syncClient,
 	}
+	if err := s.generateConfig(); err != nil {
+		return nil, maskAny(err)
+	}
+	s.syncClient = syncthing.NewClient(syncthing.ClientConfig{
+		Endpoint:           fmt.Sprintf("http://127.0.0.1:%d", config.HttpPort),
+		APIKey:             apiKey,
+		InsecureSkipVerify: false,
+	})
 	if config.UseWatcher {
-		s.watcher = NewWatcher(deps.Logger, syncClient, folderID, config.SyncDir)
+		s.watcher = NewWatcher(deps.Logger, s.syncClient, folderID, config.SyncDir)
 	}
 	return s, nil
 }
 
 // Run starts the service and waits for OS signals to terminate it.
 func (s *Service) Run() error {
-	if err := s.generateConfig(); err != nil {
-		return maskAny(err)
-	}
-
 	// Run syncthing
 	go s.runSyncthing()
 
 	// Fetch my device ID
+	s.Logger.Debug("waiting for syncthing to get started")
 	deviceID := s.getLocalDeviceID()
 
 	// Announce us in the backend
 	announceAddress := net.JoinHostPort(s.AnnounceIP, strconv.Itoa(s.AnnouncePort))
+	s.Logger.Debugf("announcing me at %s", announceAddress)
 	s.Backend.Announce(deviceID, announceAddress)
 
 	// Start monitoring the backend
@@ -343,6 +343,11 @@ func (s *Service) close() {
 
 	// Remove announcement
 	s.Backend.UnAnnounce()
+
+	// Close watcher (if any)
+	if s.watcher != nil {
+		s.watcher.Close()
+	}
 
 	// Shutdown syncthing
 	go s.syncClient.Shutdown()

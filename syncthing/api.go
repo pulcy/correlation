@@ -106,7 +106,7 @@ func (c *Client) Scan(folderID string, subs []string, delayScan time.Duration) e
 
 // GetEvents returns a list of events which happened in Syncthing since lastSeenID.
 func (c *Client) GetEvents(lastSeenID int) ([]Event, error) {
-	resp, err := c.httpGet("/events?since=" + strconv.Itoa(lastSeenID))
+	resp, err := c.httpGet("events?since=" + strconv.Itoa(lastSeenID))
 	if err != nil {
 		return nil, maskAny(err)
 	}

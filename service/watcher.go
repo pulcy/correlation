@@ -66,6 +66,7 @@ type Watcher struct {
 	folderID     string
 	folderPath   string
 	stop         chan int
+	closed       bool
 	ignorePaths  []string
 	watchFolders folderSlice
 	skipFolders  folderSlice
@@ -96,6 +97,12 @@ func (w *Watcher) Run() int {
 
 	code := <-w.stop
 	return code
+}
+
+// Close stops the watcher
+func (w *Watcher) Close() {
+	w.closed = true
+	w.stop <- 0
 }
 
 // watchFolder installs inotify watcher for a folder, launches
@@ -216,7 +223,7 @@ func (w *Watcher) accumulateChanges(debounceTimeout time.Duration, dirVsFiles in
 					currInterval = debounceTimeout
 					flushTimerNeedsReset = true
 				}
-				w.log.Debugf("[ST] Incoming Changes for %s, speeding up inotify timeout parameters", w.folderID)
+				w.log.Debugf("[ST] incoming changes, speeding up inotify timeout parameters")
 				continue
 			}
 			if item.Finished {
@@ -226,17 +233,17 @@ func (w *Watcher) accumulateChanges(debounceTimeout time.Duration, dirVsFiles in
 				continue
 			}
 			if len(inProgress) > maxFiles {
-				w.log.Debugf("[ST] Tracking too many files, aggregating STEvent: %s", item.Path)
+				w.log.Debugf("[ST] tracking too many files, aggregating STEvent: %s", item.Path)
 				continue
 			}
-			w.log.Debugf("[ST] Incoming: %s", item.Path)
+			w.log.Debugf("[ST] incoming: %s", item.Path)
 			inProgress[item.Path] = progressTime{false, time.Now()}
 		case item := <-w.fsInput:
 			if currInterval != debounceTimeout {
 				currInterval = debounceTimeout
 				flushTimerNeedsReset = true
 			}
-			w.log.Debugf("[FS] Incoming Changes for %s, speeding up inotify timeout parameters", w.folderID)
+			w.log.Debugf("[FS] incoming changes, speeding up inotify timeout parameters")
 			p, ok := inProgress[item]
 			if ok && !p.fsEvent {
 				// Change originated from ST
@@ -245,10 +252,10 @@ func (w *Watcher) accumulateChanges(debounceTimeout time.Duration, dirVsFiles in
 				continue
 			}
 			if len(inProgress) > maxFiles {
-				w.log.Debugf("[FS] Tracking too many files, aggregating FSEvent: %s", item)
+				w.log.Debugf("[FS] tracking too many files, aggregating FSEvent: %s", item)
 				continue
 			}
-			w.log.Debugf("[FS] Tracking: %s", item)
+			w.log.Debugf("[FS] tracking: %s", item)
 			inProgress[item] = progressTime{true, time.Now()}
 		case <-flushTimer.C:
 			flushTimerNeedsReset = true
@@ -258,7 +265,7 @@ func (w *Watcher) accumulateChanges(debounceTimeout time.Duration, dirVsFiles in
 			}
 			if len(inProgress) == 0 {
 				if currInterval != delayScanInterval {
-					w.log.Debugf("Slowing down inotify timeout parameters for %s", w.folderID)
+					w.log.Debugf("slowing down inotify timeout parameters")
 					currInterval = delayScanInterval
 				}
 				continue
@@ -282,7 +289,7 @@ func (w *Watcher) accumulateChanges(debounceTimeout time.Duration, dirVsFiles in
 					}
 				}
 				if len(paths) == 0 {
-					w.log.Debug("Empty paths")
+					w.log.Debug("empty paths")
 					continue
 				}
 
@@ -291,7 +298,7 @@ func (w *Watcher) accumulateChanges(debounceTimeout time.Duration, dirVsFiles in
 				if err == nil {
 					for _, path := range paths {
 						delete(inProgress, path)
-						w.log.Debugf("[INFORMED] Removed tracking for %s", path)
+						w.log.Debugf("[INFORMED] removed tracking for %s", path)
 					}
 				}
 			} else {
@@ -301,7 +308,7 @@ func (w *Watcher) accumulateChanges(debounceTimeout time.Duration, dirVsFiles in
 					for path, progress := range inProgress {
 						if progress.fsEvent {
 							delete(inProgress, path)
-							w.log.Debugf("[INFORMED] Removed tracking for %s", path)
+							w.log.Debugf("[INFORMED] removed tracking for %s", path)
 						}
 					}
 				}
@@ -444,15 +451,21 @@ func (w *Watcher) aggregateChanges(dirVsFiles int, paths []string, pathStatus st
 func (w *Watcher) watchSTEvents() {
 	lastSeenID := 0
 	for {
+		if w.closed {
+			return
+		}
 		events, err := w.syncClient.GetEvents(lastSeenID)
 		if err != nil {
 			// Work-around for Go <1.5 (https://github.com/golang/go/issues/9405)
 			if strings.Contains(err.Error(), "use of closed network connection") {
 				continue
 			}
+			if w.closed {
+				return
+			}
 
 			// Syncthing probably restarted
-			w.log.Debugf("Resetting STEvents: %#v", err)
+			w.log.Debugf("resetting STEvents: %#v", err)
 			lastSeenID = 0
 			time.Sleep(configSyncTimeout)
 			continue
