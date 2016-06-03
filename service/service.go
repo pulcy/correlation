@@ -317,12 +317,13 @@ func (s *Service) updateSyncthing() error {
 // generateConfig calls syncthing to generate a configuration file.
 func (s *Service) generateConfig() error {
 	args := []string{
-		"-generate",
+		"-generate=" + s.ConfigDir,
 		"-home=" + s.ConfigDir,
 		"-no-browser",
 		"-gui-apikey=" + s.apiKey,
 		"-gui-address=" + fmt.Sprintf(":%d", s.HttpPort),
 	}
+	s.Logger.Debugf("Starting syncthing (generate) with %#v", args)
 	cmd := exec.Command(s.SyncthingPath, args...)
 	cmd.Stdin = bytes.NewReader([]byte{})
 	cmd.Stdout = os.Stdout
@@ -344,7 +345,7 @@ func (s *Service) runSyncthing() error {
 		"-gui-address=" + fmt.Sprintf(":%d", s.HttpPort),
 	}
 
-	s.Logger.Debugf("Starting syncthing with %#v", args)
+	s.Logger.Debugf("Starting syncthing (run) with %#v", args)
 	cmd := exec.Command(s.SyncthingPath, args...)
 	cmd.Stdin = bytes.NewReader([]byte{})
 	cmd.Stdout = os.Stdout
