@@ -40,7 +40,7 @@ local:
 	@${MAKE} -B GOOS=$(shell go env GOHOSTOS) GOARCH=$(shell go env GOHOSTARCH) $(BIN)
 
 clean:
-	rm -Rf $(BIN) $(GOBUILDDIR) $(SYNCTHING)
+	rm -Rf $(BIN) $(GOBUILDDIR) $(SYNCTHING) $(SYNCBUILDDIR)
 
 deps:
 	@${MAKE} -B -s $(GOBUILDDIR)
