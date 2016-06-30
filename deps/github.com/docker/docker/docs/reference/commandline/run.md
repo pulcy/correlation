@@ -55,6 +55,7 @@ parent = "smn_cli"
       -l, --label=[]                Set metadata on the container (e.g., --label=com.example.key=value)
       --label-file=[]               Read in a file of labels (EOL delimited)
       --link=[]                     Add link to another container
+      --link-local-ip=[]            Container IPv4/IPv6 link-local addresses (e.g. 169.254.0.77, fe80::77)
       --log-driver=""               Logging driver for container
       --log-opt=[]                  Log driver specific options
       -m, --memory=""               Memory limit
@@ -89,6 +90,7 @@ parent = "smn_cli"
       --read-only                   Mount the container's root filesystem as read only
       --restart="no"                Restart policy (no, on-failure[:max-retry], always, unless-stopped)
       --rm                          Automatically remove the container when it exits
+      --runtime=""                  Name of the runtime to be used for that container
       --shm-size=[]                 Size of `/dev/shm`. The format is `<number><unit>`. `number` must be greater than `0`.  Unit is optional and can be `b` (bytes), `k` (kilobytes), `m` (megabytes), or `g` (gigabytes). If you omit the unit, the system uses bytes. If you omit the size entirely, the system uses `64m`.
       --security-opt=[]             Security Options
       --sig-proxy=true              Proxy received signals to the process
@@ -184,7 +186,8 @@ The `-w` lets the command being executed inside directory given, here
     $ docker create -it --storage-opt size=120G fedora /bin/bash
 
 This (size) will allow to set the container rootfs size to 120G at creation time. 
-User cannot pass a size less than the Default BaseFS Size.
+User cannot pass a size less than the Default BaseFS Size. This option is only 
+available for the `devicemapper`, `btrfs`, and `zfs` graph drivers.
 
 ### Mount tmpfs (--tmpfs)
 

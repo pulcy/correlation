@@ -19,11 +19,12 @@ parent = "smn_cli"
                            - is-official=(true|false)
                            - stars=<number> - image has at least 'number' stars
       --help               Print usage
+      --limit=25           Maximum returned search results
       --no-trunc           Don't truncate output
 
 Search [Docker Hub](https://hub.docker.com) for images
 
-See [*Find Public Images on Docker Hub*](../../userguide/containers/dockerrepos.md#searching-for-images) for
+See [*Find Public Images on Docker Hub*](../../tutorials/dockerrepos.md#searching-for-images) for
 more details on finding shared images from the command line.
 
 > **Note:**
@@ -74,6 +75,12 @@ at least 3 stars and the description isn't truncated in the output:
     progrium/busybox                                                                                               50                   [OK]
     radial/busyboxplus   Full-chain, Internet enabled, busybox made from scratch. Comes in git and cURL flavors.   8                    [OK]
 
+## Limit search results (--limit)
+
+The flag `--limit` is the maximium number of results returned by a search. This value could
+be in the range between 1 and 100. The default value of `--limit` is 25.
+
+
 ## Filtering
 
 The filtering flag (`-f` or `--filter`) format is a `key=value` pair. If there is more
@@ -117,5 +124,3 @@ This example displays images with a name containing 'busybox', at least
     NAME                 DESCRIPTION                                     STARS     OFFICIAL   AUTOMATED
     progrium/busybox                                                     50                   [OK]
     radial/busyboxplus   Full-chain, Internet enabled, busybox made...   8                    [OK]
-
-

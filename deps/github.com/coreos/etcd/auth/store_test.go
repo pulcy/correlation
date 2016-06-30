@@ -20,6 +20,7 @@ import (
 
 	pb "github.com/coreos/etcd/etcdserver/etcdserverpb"
 	"github.com/coreos/etcd/mvcc/backend"
+	"golang.org/x/net/context"
 )
 
 func TestUserAdd(t *testing.T) {
@@ -44,6 +45,25 @@ func TestUserAdd(t *testing.T) {
 	}
 }
 
+func enableAuthAndCreateRoot(as *authStore) error {
+	_, err := as.UserAdd(&pb.AuthUserAddRequest{Name: "root", Password: "root"})
+	if err != nil {
+		return err
+	}
+
+	_, err = as.RoleAdd(&pb.AuthRoleAddRequest{Name: "root"})
+	if err != nil {
+		return err
+	}
+
+	_, err = as.UserGrantRole(&pb.AuthUserGrantRoleRequest{User: "root", Role: "root"})
+	if err != nil {
+		return err
+	}
+
+	return as.AuthEnable()
+}
+
 func TestAuthenticate(t *testing.T) {
 	b, tPath := backend.NewDefaultTmpBackend()
 	defer func() {
@@ -52,15 +72,20 @@ func TestAuthenticate(t *testing.T) {
 	}()
 
 	as := NewAuthStore(b)
+	err := enableAuthAndCreateRoot(as)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	ua := &pb.AuthUserAddRequest{Name: "foo", Password: "bar"}
-	_, err := as.UserAdd(ua)
+	_, err = as.UserAdd(ua)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// auth a non-existing user
-	_, err = as.Authenticate("foo-test", "bar")
+	ctx1 := context.WithValue(context.WithValue(context.TODO(), "index", uint64(1)), "simpleToken", "dummy")
+	_, err = as.Authenticate(ctx1, "foo-test", "bar")
 	if err == nil {
 		t.Fatalf("expected %v, got %v", ErrAuthFailed, err)
 	}
@@ -69,13 +94,15 @@ func TestAuthenticate(t *testing.T) {
 	}
 
 	// auth an existing user with correct password
-	_, err = as.Authenticate("foo", "bar")
+	ctx2 := context.WithValue(context.WithValue(context.TODO(), "index", uint64(2)), "simpleToken", "dummy")
+	_, err = as.Authenticate(ctx2, "foo", "bar")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// auth an existing user but with wrong password
-	_, err = as.Authenticate("foo", "")
+	ctx3 := context.WithValue(context.WithValue(context.TODO(), "index", uint64(3)), "simpleToken", "dummy")
+	_, err = as.Authenticate(ctx3, "foo", "")
 	if err == nil {
 		t.Fatalf("expected %v, got %v", ErrAuthFailed, err)
 	}
@@ -92,9 +119,13 @@ func TestUserDelete(t *testing.T) {
 	}()
 
 	as := NewAuthStore(b)
+	err := enableAuthAndCreateRoot(as)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	ua := &pb.AuthUserAddRequest{Name: "foo"}
-	_, err := as.UserAdd(ua)
+	_, err = as.UserAdd(ua)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,12 +155,18 @@ func TestUserChangePassword(t *testing.T) {
 	}()
 
 	as := NewAuthStore(b)
-
-	_, err := as.UserAdd(&pb.AuthUserAddRequest{Name: "foo"})
+	err := enableAuthAndCreateRoot(as)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = as.Authenticate("foo", "")
+
+	_, err = as.UserAdd(&pb.AuthUserAddRequest{Name: "foo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx1 := context.WithValue(context.WithValue(context.TODO(), "index", uint64(1)), "simpleToken", "dummy")
+	_, err = as.Authenticate(ctx1, "foo", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +175,9 @@ func TestUserChangePassword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = as.Authenticate("foo", "bar")
+
+	ctx2 := context.WithValue(context.WithValue(context.TODO(), "index", uint64(2)), "simpleToken", "dummy")
+	_, err = as.Authenticate(ctx2, "foo", "bar")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,9 +200,13 @@ func TestRoleAdd(t *testing.T) {
 	}()
 
 	as := NewAuthStore(b)
+	err := enableAuthAndCreateRoot(as)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// adds a new role
-	_, err := as.RoleAdd(&pb.AuthRoleAddRequest{Name: "role-test"})
+	_, err = as.RoleAdd(&pb.AuthRoleAddRequest{Name: "role-test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,8 +220,12 @@ func TestUserGrant(t *testing.T) {
 	}()
 
 	as := NewAuthStore(b)
+	err := enableAuthAndCreateRoot(as)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	_, err := as.UserAdd(&pb.AuthUserAddRequest{Name: "foo"})
+	_, err = as.UserAdd(&pb.AuthUserAddRequest{Name: "foo"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,13 +237,13 @@ func TestUserGrant(t *testing.T) {
 	}
 
 	// grants a role to the user
-	_, err = as.UserGrant(&pb.AuthUserGrantRequest{User: "foo", Role: "role-test"})
+	_, err = as.UserGrantRole(&pb.AuthUserGrantRoleRequest{User: "foo", Role: "role-test"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// grants a role to a non-existing user
-	_, err = as.UserGrant(&pb.AuthUserGrantRequest{User: "foo-test", Role: "role-test"})
+	_, err = as.UserGrantRole(&pb.AuthUserGrantRoleRequest{User: "foo-test", Role: "role-test"})
 	if err == nil {
 		t.Fatalf("expected %v, got %v", ErrUserNotFound, err)
 	}

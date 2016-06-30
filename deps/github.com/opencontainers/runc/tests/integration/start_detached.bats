@@ -11,9 +11,9 @@ function teardown() {
   teardown_busybox
 }
 
-@test "runc start detached" {
-  # start busybox detached
-  run "$RUNC" start -d --console /dev/pts/ptmx test_busybox
+@test "runc run detached" {
+  # run busybox detached
+  runc run -d --console /dev/pts/ptmx test_busybox
   [ "$status" -eq 0 ]
 
   # check state
@@ -22,9 +22,25 @@ function teardown() {
   testcontainer test_busybox running
 }
 
-@test "runc start detached --pid-file" {
-  # start busybox detached
-  run "$RUNC" start --pid-file pid.txt -d --console /dev/pts/ptmx test_busybox
+@test "runc run detached ({u,g}id != 0)" {
+  # replace "uid": 0 with "uid": 1000
+  # and do a similar thing for gid.
+  sed -i 's;"uid": 0;"uid": 1000;g' config.json
+  sed -i 's;"gid": 0;"gid": 100;g' config.json
+
+  # run busybox detached
+  runc run -d --console /dev/pts/ptmx test_busybox
+  [ "$status" -eq 0 ]
+
+  # check state
+  wait_for_container 15 1 test_busybox
+
+  testcontainer test_busybox running
+}
+
+@test "runc run detached --pid-file" {
+  # run busybox detached
+  runc run --pid-file pid.txt -d --console /dev/pts/ptmx test_busybox
   [ "$status" -eq 0 ]
 
   # check state

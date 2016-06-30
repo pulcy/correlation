@@ -14,7 +14,7 @@ parameter that is initially set to call the "sh" command when the container is
 started. Calling "sh" may work for an ubuntu container or busybox, but will not
 work for containers that do not include the "sh" program.
 
-EXAMPLE:
+# EXAMPLE
   To run docker's hello-world container one needs to set the args parameter
 in the spec to call hello. This can be done using the sed command or a text
 editor. The following commands create a bundle for hello-world, change the
@@ -46,4 +46,4 @@ example: "sudo runc start container1" will give runc root privilege to start the
 container on your host.
 
 # OPTIONS
-   --bundle, -b         path to the root of the bundle directory
+   --bundle value, -b value     path to the root of the bundle directory

@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/codegangsta/cli"
 	"github.com/opencontainers/runc/libcontainer/utils"
 	"github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/urfave/cli"
 )
 
 var execCommand = cli.Command{
@@ -22,6 +22,7 @@ var execCommand = cli.Command{
 Where "<container-id>" is the name for the instance of the container and
 "<container command>" is the command to be executed in the container.
 
+EXAMPLE:
 For example, if the container is configured to run the linux ps command the
 following will output a list of processes running in the container:
 	 

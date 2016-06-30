@@ -1,4 +1,4 @@
-#compdef docker
+#compdef docker dockerd
 #
 # zsh completion for docker (http://docker.com)
 #
@@ -274,6 +274,31 @@ __docker_complete_detach_keys() {
     _describe -t detach_keys-ctrl "'ctrl-' + 'a-z @ [ \\\\ ] ^ _'" ctrl_keys -qS "," && ret=0
 }
 
+__docker_complete_pid() {
+    [[ $PREFIX = -* ]] && return 1
+    integer ret=1
+    local -a opts vopts
+
+    opts=('host')
+    vopts=('container')
+
+    if compset -P '*:'; then
+        case "${${words[-1]%:*}#*=}" in
+            (container)
+                __docker_runningcontainers && ret=0
+                ;;
+            *)
+                _message 'value' && ret=0
+                ;;
+        esac
+    else
+        _describe -t pid-value-opts "PID Options with value" vopts -qS ":" && ret=0
+        _describe -t pid-opts "PID Options" opts && ret=0
+    fi
+
+    return ret
+}
+
 __docker_complete_ps_filters() {
     [[ $PREFIX = -* ]] && return 1
     integer ret=1
@@ -292,6 +317,9 @@ __docker_complete_ps_filters() {
             (name)
                 __docker_containers_names && ret=0
                 ;;
+            (network)
+                __docker_networks && ret=0
+                ;;
             (status)
                 status_opts=('created' 'dead' 'exited' 'paused' 'restarting' 'running')
                 _describe -t status-filter-opts "Status Filter Options" status_opts && ret=0
@@ -304,7 +332,7 @@ __docker_complete_ps_filters() {
                 ;;
         esac
     else
-        opts=('ancestor' 'before' 'exited' 'id' 'label' 'name' 'since' 'status' 'volume')
+        opts=('ancestor' 'before' 'exited' 'id' 'label' 'name' 'network' 'since' 'status' 'volume')
         _describe -t filter-opts "Filter Options" opts -qS "=" && ret=0
     fi
 
@@ -357,6 +385,60 @@ __docker_complete_images_filters() {
         esac
     else
         _describe -t filter-opts "Filter Options" opts -qS "=" && ret=0
+    fi
+
+    return ret
+}
+
+__docker_complete_events_filter() {
+    [[ $PREFIX = -* ]] && return 1
+    integer ret=1
+    declare -a opts
+
+    opts=('container' 'daemon' 'event' 'image' 'label' 'network' 'type' 'volume')
+
+    if compset -P '*='; then
+        case "${${words[-1]%=*}#*=}" in
+            (container)
+                __docker_containers && ret=0
+                ;;
+            (daemon)
+                emulate -L zsh
+                setopt extendedglob
+                local -a daemon_opts
+                daemon_opts=(
+                    ${(f)${${"$(_call_program commands docker $docker_options info)"##*$'\n'Name: }%%$'\n'^ *}}
+                    ${${(f)${${"$(_call_program commands docker $docker_options info)"##*$'\n'ID: }%%$'\n'^ *}}//:/\\:}
+                )
+                _describe -t daemon-filter-opts "daemon filter options" daemon_opts && ret=0
+                ;;
+            (event)
+                local -a event_opts
+                event_opts=('attach' 'commit' 'connect' 'copy' 'create' 'delete' 'destroy' 'detach' 'die' 'disconnect' 'exec_create' 'exec_detach'
+                'exec_start' 'export' 'import' 'kill' 'load'  'mount' 'oom' 'pause' 'pull' 'push' 'reload' 'rename' 'resize' 'restart' 'save' 'start'
+                'stop' 'tag' 'top' 'unmount' 'unpause' 'untag' 'update')
+                _describe -t event-filter-opts "event filter options" event_opts && ret=0
+                ;;
+            (image)
+                __docker_images && ret=0
+                ;;
+            (network)
+                __docker_networks && ret=0
+                ;;
+            (type)
+                local -a type_opts
+                type_opts=('container' 'daemon' 'image' 'network' 'volume')
+                _describe -t type-filter-opts "type filter options" type_opts && ret=0
+                ;;
+            (volume)
+                __docker_volumes && ret=0
+                ;;
+            *)
+                _message 'value' && ret=0
+                ;;
+        esac
+    else
+        _describe -t filter-opts "filter options" opts -qS "=" && ret=0
     fi
 
     return ret
@@ -481,6 +563,7 @@ __docker_network_subcommand() {
                 "($help)--ip=[Container IPv4 address]:IPv4: " \
                 "($help)--ip6=[Container IPv6 address]:IPv6: " \
                 "($help)*--link=[Add a link to another container]:link:->link" \
+                "($help)*--link-local-ip=[Add a link-local address for the container]:IPv4/IPv6: " \
                 "($help -)1:network:__docker_networks" \
                 "($help -)2:containers:__docker_containers" && ret=0
 
@@ -704,7 +787,7 @@ __docker_subcommand() {
         "($help)--userns=[Container user namespace]:user namespace:(host)"
     )
     opts_build_create_run_update=(
-        "($help)--cpu-shares=[CPU shares (relative weight)]:CPU shares:(0 10 100 200 500 800 1000)"
+        "($help -c --cpu-shares)"{-c=,--cpu-shares=}"[CPU shares (relative weight)]:CPU shares:(0 10 100 200 500 800 1000)"
         "($help)--cpu-period=[Limit the CPU CFS (Completely Fair Scheduler) period]:CPU period: "
         "($help)--cpu-quota=[Limit the CPU CFS (Completely Fair Scheduler) quota]:CPU quota: "
         "($help)--cpuset-cpus=[CPUs in which to allow execution]:CPUs: "
@@ -738,6 +821,7 @@ __docker_subcommand() {
         "($help)--ip6=[Container IPv6 address]:IPv6: "
         "($help)--ipc=[IPC namespace to use]:IPC namespace: "
         "($help)*--link=[Add link to another container]:link:->link"
+        "($help)*--link-local-ip=[Add a link-local address for the container]:IPv4/IPv6: "
         "($help)*"{-l=,--label=}"[Container metadata]:label: "
         "($help)--log-driver=[Default driver for container logs]:Logging driver:(awslogs etwlogs fluentd gcplogs gelf journald json-file none splunk syslog)"
         "($help)*--log-opt=[Log driver specific options]:log driver options:__docker_log_options"
@@ -750,7 +834,7 @@ __docker_subcommand() {
         "($help)--pids-limit[Tune container pids limit (set -1 for unlimited)]"
         "($help -P --publish-all)"{-P,--publish-all}"[Publish all exposed ports]"
         "($help)*"{-p=,--publish=}"[Expose a container's port to the host]:port:_ports"
-        "($help)--pid=[PID namespace to use]:PID namespace: "
+        "($help)--pid=[PID namespace to use]:PID namespace:__docker_complete_pid"
         "($help)--privileged[Give extended privileges to this container]"
         "($help)--read-only[Mount the container's root filesystem as read only]"
         "($help)*--security-opt=[Security options]:security option: "
@@ -854,6 +938,7 @@ __docker_subcommand() {
                 "($help -b --bridge)"{-b=,--bridge=}"[Attach containers to a network bridge]:bridge:_net_interfaces" \
                 "($help)--bip=[Network bridge IP]:IP address: " \
                 "($help)--cgroup-parent=[Parent cgroup for all containers]:cgroup: " \
+                "($help)--config-file=[Path to daemon configuration file]:Config File:_files" \
                 "($help)--containerd=[Path to containerd socket]:socket:_files -g \"*.sock\"" \
                 "($help -D --debug)"{-D,--debug}"[Enable debug mode]" \
                 "($help)--default-gateway[Container default gateway IPv4 address]:IPv4 address: " \
@@ -882,6 +967,7 @@ __docker_subcommand() {
                 "($help)--ipv6[Enable IPv6 networking]" \
                 "($help -l --log-level)"{-l=,--log-level=}"[Logging level]:level:(debug info warn error fatal)" \
                 "($help)*--label=[Key=value labels]:label: " \
+                "($help)--live-restore[Enable live restore of docker when containers are still running]" \
                 "($help)--log-driver=[Default driver for container logs]:Logging driver:(awslogs etwlogs fluentd gcplogs gelf journald json-file none splunk syslog)" \
                 "($help)*--log-opt=[Log driver specific options]:log driver options:__docker_log_options" \
                 "($help)--max-concurrent-downloads[Set the max concurrent downloads for each pull]" \
@@ -890,7 +976,7 @@ __docker_subcommand() {
                 "($help -p --pidfile)"{-p=,--pidfile=}"[Path to use for daemon PID file]:PID file:_files" \
                 "($help)--raw-logs[Full timestamps without ANSI coloring]" \
                 "($help)*--registry-mirror=[Preferred Docker registry mirror]:registry mirror: " \
-                "($help -s --storage-driver)"{-s=,--storage-driver=}"[Storage driver to use]:driver:(aufs devicemapper btrfs zfs overlay)" \
+                "($help -s --storage-driver)"{-s=,--storage-driver=}"[Storage driver to use]:driver:(aufs btrfs devicemapper overlay overlay2 vfs zfs)" \
                 "($help)--selinux-enabled[Enable selinux support]" \
                 "($help)*--storage-opt=[Storage driver options]:storage driver options: " \
                 "($help)--tls[Use TLS]" \
@@ -936,7 +1022,7 @@ __docker_subcommand() {
         (events)
             _arguments $(__docker_arguments) \
                 $opts_help \
-                "($help)*"{-f=,--filter=}"[Filter values]:filter: " \
+                "($help)*"{-f=,--filter=}"[Filter values]:filter:__docker_complete_events_filter" \
                 "($help)--since=[Events created since this timestamp]:timestamp: " \
                 "($help)--until=[Events created until this timestamp]:timestamp: " && ret=0
             ;;
@@ -1092,7 +1178,7 @@ __docker_subcommand() {
                 $opts_help \
                 "($help -a --all)"{-a,--all}"[Show all containers]" \
                 "($help)--before=[Show only container created before...]:containers:__docker_containers" \
-                "($help)*"{-f=,--filter=}"[Filter values]:filter:->filter-options" \
+                "($help)*"{-f=,--filter=}"[Filter values]:filter:__docker_complete_ps_filters" \
                 "($help)--format[Pretty-print containers using a Go template]:format: " \
                 "($help -l --latest)"{-l,--latest}"[Show only the latest created container]" \
                 "($help)-n[Show n last created containers, include non-running one]:n:(1 5 10 25 50)" \
@@ -1100,12 +1186,6 @@ __docker_subcommand() {
                 "($help -q --quiet)"{-q,--quiet}"[Only show numeric IDs]" \
                 "($help -s --size)"{-s,--size}"[Display total file sizes]" \
                 "($help)--since=[Show only containers created since...]:containers:__docker_containers" && ret=0
-
-            case $state in
-                (filter-options)
-                    __docker_complete_ps_filters && ret=0
-                    ;;
-            esac
             ;;
         (pull)
             _arguments $(__docker_arguments) \
@@ -1138,7 +1218,16 @@ __docker_subcommand() {
                 "($help -f --force)"{-f,--force}"[Force removal]" \
                 "($help -l --link)"{-l,--link}"[Remove the specified link and not the underlying container]" \
                 "($help -v --volumes)"{-v,--volumes}"[Remove the volumes associated to the container]" \
-                "($help -)*:containers:__docker_stoppedcontainers" && ret=0
+                "($help -)*:containers:->values" && ret=0
+            case $state in
+                (values)
+                    if [[ ${words[(r)-f]} == -f || ${words[(r)--force]} == --force ]]; then
+                        __docker_containers && ret=0
+                    else
+                        __docker_stoppedcontainers && ret=0
+                    fi
+                    ;;
+            esac
             ;;
         (rmi)
             _arguments $(__docker_arguments) \
@@ -1156,9 +1245,15 @@ __docker_subcommand() {
                 $opts_create_run_update \
                 $opts_attach_exec_run_start \
                 "($help -d --detach)"{-d,--detach}"[Detached mode: leave the container running in the background]" \
+                "($help)--health-cmd=[Command to run to check health]:command: " \
+                "($help)--health-interval=[Time between running the check]:time: " \
+                "($help)--health-retries=[Consecutive failures needed to report unhealthy]:retries:(1 2 3 4 5)" \
+                "($help)--health-timeout=[Maximum time to allow one check to run]:time: " \
+                "($help)--no-healthcheck[Disable any container-specified HEALTHCHECK]" \
                 "($help)--rm[Remove intermediate containers when it exits]" \
                 "($help)--sig-proxy[Proxy all received signals to the process (non-TTY mode only)]" \
                 "($help)--stop-signal=[Signal to kill a container]:signal:_signals" \
+                "($help)--storage-opt=[Set storage driver options per container]:storage options:->storage-opt" \
                 "($help -): :__docker_images" \
                 "($help -):command: _command_names -e" \
                 "($help -)*::arguments: _normal" && ret=0
@@ -1169,6 +1264,14 @@ __docker_subcommand() {
                         _wanted alias expl "Alias" compadd -E "" && ret=0
                     else
                         __docker_runningcontainers -qS ":" && ret=0
+                    fi
+                    ;;
+                (storage-opt)
+                    if compset -P "*="; then
+                        _message "value" && ret=0
+                    else
+                        opts=('size')
+                        _describe -t filter-opts "storage options" opts -qS "=" && ret=0
                     fi
                     ;;
             esac
@@ -1184,6 +1287,7 @@ __docker_subcommand() {
             _arguments $(__docker_arguments) \
                 $opts_help \
                 "($help)*"{-f=,--filter=}"[Filter values]:filter:->filter-options" \
+                "($help)--limit=[Maximum returned search results]:limit:(1 5 10 25 50)" \
                 "($help)--no-trunc[Do not truncate output]" \
                 "($help -):term: " && ret=0
 
@@ -1315,6 +1419,13 @@ _docker() {
             ;;
     esac
 
+    return ret
+}
+
+_dockerd() {
+    integer ret=1
+    words[1]='daemon'
+    __docker_subcommand && ret=0
     return ret
 }
 

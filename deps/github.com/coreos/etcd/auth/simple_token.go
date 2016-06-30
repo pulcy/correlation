@@ -27,15 +27,7 @@ const (
 	defaultSimpleTokenLength = 16
 )
 
-var (
-	simpleTokens map[string]string // token -> user ID
-)
-
-func init() {
-	simpleTokens = make(map[string]string)
-}
-
-func genSimpleToken() (string, error) {
+func (as *authStore) GenSimpleToken() (string, error) {
 	ret := make([]byte, defaultSimpleTokenLength)
 
 	for i := 0; i < defaultSimpleTokenLength; i++ {
@@ -50,22 +42,14 @@ func genSimpleToken() (string, error) {
 	return string(ret), nil
 }
 
-func genSimpleTokenForUser(userID string) (string, error) {
-	var token string
-	var err error
+func (as *authStore) assignSimpleTokenToUser(username, token string) {
+	as.simpleTokensMu.Lock()
 
-	for {
-		// generating random numbers in RSM would't a good idea
-		token, err = genSimpleToken()
-		if err != nil {
-			return "", err
-		}
-
-		if _, ok := simpleTokens[token]; !ok {
-			break
-		}
+	_, ok := as.simpleTokens[token]
+	if ok {
+		plog.Panicf("token %s is alredy used", token)
 	}
 
-	simpleTokens[token] = userID
-	return token, nil
+	as.simpleTokens[token] = username
+	as.simpleTokensMu.Unlock()
 }

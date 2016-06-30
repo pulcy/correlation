@@ -38,11 +38,17 @@ var (
 
 	ErrGRPCRequestTooLarge = grpc.Errorf(codes.InvalidArgument, "etcdserver: request is too large")
 
-	ErrGRPCUserAlreadyExist = grpc.Errorf(codes.FailedPrecondition, "etcdserver: user name already exists")
-	ErrGRPCUserNotFound     = grpc.Errorf(codes.FailedPrecondition, "etcdserver: user name not found")
-	ErrGRPCRoleAlreadyExist = grpc.Errorf(codes.FailedPrecondition, "etcdserver: role name already exists")
-	ErrGRPCRoleNotFound     = grpc.Errorf(codes.FailedPrecondition, "etcdserver: role name not found")
-	ErrGRPCAuthFailed       = grpc.Errorf(codes.InvalidArgument, "etcdserver: authentication failed, invalid user ID or password")
+	ErrGRPCRootUserNotExist     = grpc.Errorf(codes.FailedPrecondition, "etcdserver: root user does not exist")
+	ErrGRPCRootRoleNotExist     = grpc.Errorf(codes.FailedPrecondition, "etcdserver: root user does not have root role")
+	ErrGRPCUserAlreadyExist     = grpc.Errorf(codes.FailedPrecondition, "etcdserver: user name already exists")
+	ErrGRPCUserNotFound         = grpc.Errorf(codes.FailedPrecondition, "etcdserver: user name not found")
+	ErrGRPCRoleAlreadyExist     = grpc.Errorf(codes.FailedPrecondition, "etcdserver: role name already exists")
+	ErrGRPCRoleNotFound         = grpc.Errorf(codes.FailedPrecondition, "etcdserver: role name not found")
+	ErrGRPCAuthFailed           = grpc.Errorf(codes.InvalidArgument, "etcdserver: authentication failed, invalid user ID or password")
+	ErrGRPCPermissionDenied     = grpc.Errorf(codes.FailedPrecondition, "etcdserver: permission denied")
+	ErrGRPCRoleNotGranted       = grpc.Errorf(codes.FailedPrecondition, "etcdserver: role is not granted to the user")
+	ErrGRPCPermissionNotGranted = grpc.Errorf(codes.FailedPrecondition, "etcdserver: permission is not granted to the role")
+	ErrGRPCAuthNotEnabled       = grpc.Errorf(codes.FailedPrecondition, "etcdserver: authentication is not enabled")
 
 	ErrGRPCNoLeader   = grpc.Errorf(codes.Unavailable, "etcdserver: no leader")
 	ErrGRPCNotCapable = grpc.Errorf(codes.Unavailable, "etcdserver: not capable")
@@ -65,11 +71,17 @@ var (
 
 		grpc.ErrorDesc(ErrGRPCRequestTooLarge): ErrGRPCRequestTooLarge,
 
-		grpc.ErrorDesc(ErrGRPCUserAlreadyExist): ErrGRPCUserAlreadyExist,
-		grpc.ErrorDesc(ErrGRPCUserNotFound):     ErrGRPCUserNotFound,
-		grpc.ErrorDesc(ErrGRPCRoleAlreadyExist): ErrGRPCRoleAlreadyExist,
-		grpc.ErrorDesc(ErrGRPCRoleNotFound):     ErrGRPCRoleNotFound,
-		grpc.ErrorDesc(ErrGRPCAuthFailed):       ErrGRPCAuthFailed,
+		grpc.ErrorDesc(ErrGRPCRootUserNotExist):     ErrGRPCRootUserNotExist,
+		grpc.ErrorDesc(ErrGRPCRootRoleNotExist):     ErrGRPCRootRoleNotExist,
+		grpc.ErrorDesc(ErrGRPCUserAlreadyExist):     ErrGRPCUserAlreadyExist,
+		grpc.ErrorDesc(ErrGRPCUserNotFound):         ErrGRPCUserNotFound,
+		grpc.ErrorDesc(ErrGRPCRoleAlreadyExist):     ErrGRPCRoleAlreadyExist,
+		grpc.ErrorDesc(ErrGRPCRoleNotFound):         ErrGRPCRoleNotFound,
+		grpc.ErrorDesc(ErrGRPCAuthFailed):           ErrGRPCAuthFailed,
+		grpc.ErrorDesc(ErrGRPCPermissionDenied):     ErrGRPCPermissionDenied,
+		grpc.ErrorDesc(ErrGRPCRoleNotGranted):       ErrGRPCRoleNotGranted,
+		grpc.ErrorDesc(ErrGRPCPermissionNotGranted): ErrGRPCPermissionNotGranted,
+		grpc.ErrorDesc(ErrGRPCAuthNotEnabled):       ErrGRPCAuthNotEnabled,
 
 		grpc.ErrorDesc(ErrGRPCNoLeader):   ErrGRPCNoLeader,
 		grpc.ErrorDesc(ErrGRPCNotCapable): ErrGRPCNotCapable,
@@ -93,11 +105,17 @@ var (
 
 	ErrRequestTooLarge = Error(ErrGRPCRequestTooLarge)
 
-	ErrUserAlreadyExist = Error(ErrGRPCUserAlreadyExist)
-	ErrUserNotFound     = Error(ErrGRPCUserNotFound)
-	ErrRoleAlreadyExist = Error(ErrGRPCRoleAlreadyExist)
-	ErrRoleNotFound     = Error(ErrGRPCRoleNotFound)
-	ErrAuthFailed       = Error(ErrGRPCAuthFailed)
+	ErrRootUserNotExist     = Error(ErrGRPCRootUserNotExist)
+	ErrRootRoleNotExist     = Error(ErrGRPCRootRoleNotExist)
+	ErrUserAlreadyExist     = Error(ErrGRPCUserAlreadyExist)
+	ErrUserNotFound         = Error(ErrGRPCUserNotFound)
+	ErrRoleAlreadyExist     = Error(ErrGRPCRoleAlreadyExist)
+	ErrRoleNotFound         = Error(ErrGRPCRoleNotFound)
+	ErrAuthFailed           = Error(ErrGRPCAuthFailed)
+	ErrPermissionDenied     = Error(ErrGRPCPermissionDenied)
+	ErrRoleNotGranted       = Error(ErrGRPCRoleNotGranted)
+	ErrPermissionNotGranted = Error(ErrGRPCPermissionNotGranted)
+	ErrAuthNotEnabled       = Error(ErrGRPCAuthNotEnabled)
 
 	ErrNoLeader   = Error(ErrGRPCNoLeader)
 	ErrNotCapable = Error(ErrGRPCNotCapable)

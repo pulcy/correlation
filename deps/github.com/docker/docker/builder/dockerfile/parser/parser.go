@@ -3,6 +3,7 @@ package parser
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"regexp"
@@ -66,29 +67,31 @@ func init() {
 	// functions. Errors are propagated up by Parse() and the resulting AST can
 	// be incorporated directly into the existing AST as a next.
 	dispatch = map[string]func(string) (*Node, map[string]bool, error){
-		command.User:       parseString,
-		command.Onbuild:    parseSubCommand,
-		command.Workdir:    parseString,
-		command.Env:        parseEnv,
-		command.Label:      parseLabel,
-		command.Maintainer: parseString,
-		command.From:       parseString,
-		command.Add:        parseMaybeJSONToList,
-		command.Copy:       parseMaybeJSONToList,
-		command.Run:        parseMaybeJSON,
-		command.Cmd:        parseMaybeJSON,
-		command.Entrypoint: parseMaybeJSON,
-		command.Expose:     parseStringsWhitespaceDelimited,
-		command.Volume:     parseMaybeJSONToList,
-		command.StopSignal: parseString,
-		command.Arg:        parseNameOrNameVal,
+		command.Add:         parseMaybeJSONToList,
+		command.Arg:         parseNameOrNameVal,
+		command.Cmd:         parseMaybeJSON,
+		command.Copy:        parseMaybeJSONToList,
+		command.Entrypoint:  parseMaybeJSON,
+		command.Env:         parseEnv,
+		command.Expose:      parseStringsWhitespaceDelimited,
+		command.From:        parseString,
+		command.Healthcheck: parseHealthConfig,
+		command.Label:       parseLabel,
+		command.Maintainer:  parseString,
+		command.Onbuild:     parseSubCommand,
+		command.Run:         parseMaybeJSON,
+		command.Shell:       parseMaybeJSON,
+		command.StopSignal:  parseString,
+		command.User:        parseString,
+		command.Volume:      parseMaybeJSONToList,
+		command.Workdir:     parseString,
 	}
 }
 
 // ParseLine parse a line and return the remainder.
 func ParseLine(line string) (string, *Node, error) {
 
-	// Handle the parser directive '# escape=<char>. Parser directives must preceed
+	// Handle the parser directive '# escape=<char>. Parser directives must precede
 	// any builder instruction or other comments, and cannot be repeated.
 	if lookingForDirectives {
 		tecMatch := tokenEscapeCommand.FindStringSubmatch(strings.ToLower(line))
@@ -151,8 +154,14 @@ func Parse(rwc io.Reader) (*Node, error) {
 	root.StartLine = -1
 	scanner := bufio.NewScanner(rwc)
 
+	utf8bom := []byte{0xEF, 0xBB, 0xBF}
 	for scanner.Scan() {
-		scannedLine := strings.TrimLeftFunc(scanner.Text(), unicode.IsSpace)
+		scannedBytes := scanner.Bytes()
+		// We trim UTF8 BOM
+		if currentLine == 0 {
+			scannedBytes = bytes.TrimPrefix(scannedBytes, utf8bom)
+		}
+		scannedLine := strings.TrimLeftFunc(string(scannedBytes), unicode.IsSpace)
 		currentLine++
 		line, child, err := ParseLine(scannedLine)
 		if err != nil {

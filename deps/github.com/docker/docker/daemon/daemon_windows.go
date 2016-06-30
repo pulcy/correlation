@@ -111,32 +111,32 @@ func verifyContainerResources(resources *containertypes.Resources, sysInfo *sysi
 
 	if resources.BlkioWeight > 0 {
 		warnings = append(warnings, "Windows does not support Block I/O weight. Weight discarded.")
-		logrus.Warnf("Windows does not support Block I/O weight. --blkio-weight discarded.")
+		logrus.Warn("Windows does not support Block I/O weight. --blkio-weight discarded.")
 		resources.BlkioWeight = 0
 	}
 	if len(resources.BlkioWeightDevice) > 0 {
 		warnings = append(warnings, "Windows does not support Block I/O weight_device.")
-		logrus.Warnf("Windows does not support Block I/O weight_device. --blkio-weight-device discarded.")
+		logrus.Warn("Windows does not support Block I/O weight_device. --blkio-weight-device discarded.")
 		resources.BlkioWeightDevice = []*pblkiodev.WeightDevice{}
 	}
 	if len(resources.BlkioDeviceReadBps) > 0 {
 		warnings = append(warnings, "Windows does not support Block read limit in bytes per second.")
-		logrus.Warnf("Windows does not support Block I/O read limit in bytes per second. --device-read-bps discarded.")
+		logrus.Warn("Windows does not support Block I/O read limit in bytes per second. --device-read-bps discarded.")
 		resources.BlkioDeviceReadBps = []*pblkiodev.ThrottleDevice{}
 	}
 	if len(resources.BlkioDeviceWriteBps) > 0 {
 		warnings = append(warnings, "Windows does not support Block write limit in bytes per second.")
-		logrus.Warnf("Windows does not support Block I/O write limit in bytes per second. --device-write-bps discarded.")
+		logrus.Warn("Windows does not support Block I/O write limit in bytes per second. --device-write-bps discarded.")
 		resources.BlkioDeviceWriteBps = []*pblkiodev.ThrottleDevice{}
 	}
 	if len(resources.BlkioDeviceReadIOps) > 0 {
 		warnings = append(warnings, "Windows does not support Block read limit in IO per second.")
-		logrus.Warnf("Windows does not support Block I/O read limit in IO per second. -device-read-iops discarded.")
+		logrus.Warn("Windows does not support Block I/O read limit in IO per second. -device-read-iops discarded.")
 		resources.BlkioDeviceReadIOps = []*pblkiodev.ThrottleDevice{}
 	}
 	if len(resources.BlkioDeviceWriteIOps) > 0 {
 		warnings = append(warnings, "Windows does not support Block write limit in IO per second.")
-		logrus.Warnf("Windows does not support Block I/O write limit in IO per second. --device-write-iops discarded.")
+		logrus.Warn("Windows does not support Block I/O write limit in IO per second. --device-write-iops discarded.")
 		resources.BlkioDeviceWriteIOps = []*pblkiodev.ThrottleDevice{}
 	}
 	return warnings, nil
@@ -154,6 +154,10 @@ func verifyPlatformContainerSettings(daemon *Daemon, hostConfig *containertypes.
 	}
 
 	return warnings, nil
+}
+
+// platformReload update configuration with platform specific options
+func (daemon *Daemon) platformReload(config *Config, attributes *map[string]string) {
 }
 
 // verifyDaemonSettings performs validation of daemon config struct
@@ -185,8 +189,8 @@ func configureMaxThreads(config *Config) error {
 	return nil
 }
 
-func (daemon *Daemon) initNetworkController(config *Config) (libnetwork.NetworkController, error) {
-	netOptions, err := daemon.networkOptions(config)
+func (daemon *Daemon) initNetworkController(config *Config, activeSandboxes map[string]interface{}) (libnetwork.NetworkController, error) {
+	netOptions, err := daemon.networkOptions(config, nil)
 	if err != nil {
 		return nil, err
 	}

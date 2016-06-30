@@ -1,7 +1,6 @@
 package hcsshim
 
 import (
-	"errors"
 	"sync"
 	"syscall"
 )
@@ -26,53 +25,55 @@ var (
 	// Common notifications
 	hcsNotificationInvalid           hcsNotification = 0x00000000
 	hcsNotificationServiceDisconnect hcsNotification = 0x01000000
-
-	// ErrUnexpectedContainerExit is the error returned when a container exits while waiting for
-	// a different expected notification
-	ErrUnexpectedContainerExit = errors.New("unexpected container exit")
-
-	// ErrUnexpectedProcessAbort is the error returned when communication with the compute service
-	// is lost while waiting for a notification
-	ErrUnexpectedProcessAbort = errors.New("lost communication with compute service")
 )
 
 type hcsNotification uint32
 type notificationChannel chan error
 
 type notifcationWatcherContext struct {
-	channel              notificationChannel
-	expectedNotification hcsNotification
-	handle               hcsCallback
+	channels notificationChannels
+	handle   hcsCallback
+}
+
+type notificationChannels map[hcsNotification]notificationChannel
+
+func newChannels() notificationChannels {
+	channels := make(notificationChannels)
+
+	channels[hcsNotificationSystemExited] = make(notificationChannel, 1)
+	channels[hcsNotificationSystemCreateCompleted] = make(notificationChannel, 1)
+	channels[hcsNotificationSystemStartCompleted] = make(notificationChannel, 1)
+	channels[hcsNotificationSystemPauseCompleted] = make(notificationChannel, 1)
+	channels[hcsNotificationSystemResumeCompleted] = make(notificationChannel, 1)
+	channels[hcsNotificationProcessExited] = make(notificationChannel, 1)
+	channels[hcsNotificationServiceDisconnect] = make(notificationChannel, 1)
+	return channels
+}
+func closeChannels(channels notificationChannels) {
+	close(channels[hcsNotificationSystemExited])
+	close(channels[hcsNotificationSystemCreateCompleted])
+	close(channels[hcsNotificationSystemStartCompleted])
+	close(channels[hcsNotificationSystemPauseCompleted])
+	close(channels[hcsNotificationSystemResumeCompleted])
+	close(channels[hcsNotificationProcessExited])
+	close(channels[hcsNotificationServiceDisconnect])
 }
 
 func notificationWatcher(notificationType hcsNotification, callbackNumber uintptr, notificationStatus uintptr, notificationData *uint16) uintptr {
-	var (
-		result       error
-		completeWait = false
-	)
+	var result error
+	if int32(notificationStatus) < 0 {
+		result = syscall.Errno(win32FromHresult(notificationStatus))
+	}
 
 	callbackMapLock.RLock()
 	context := callbackMap[callbackNumber]
 	callbackMapLock.RUnlock()
 
-	if notificationType == context.expectedNotification {
-		if int32(notificationStatus) < 0 {
-			result = syscall.Errno(win32FromHresult(notificationStatus))
-		} else {
-			result = nil
-		}
-		completeWait = true
-	} else if notificationType == hcsNotificationSystemExited {
-		result = ErrUnexpectedContainerExit
-		completeWait = true
-	} else if notificationType == hcsNotificationServiceDisconnect {
-		result = ErrUnexpectedProcessAbort
-		completeWait = true
+	if context == nil {
+		return 0
 	}
 
-	if completeWait {
-		context.channel <- result
-	}
+	context.channels[notificationType] <- result
 
 	return 0
 }

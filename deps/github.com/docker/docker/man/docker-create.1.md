@@ -43,6 +43,7 @@ docker-create - Create a new container
 [**-l**|**--label**[=*[]*]]
 [**--label-file**[=*[]*]]
 [**--link**[=*[]*]]
+[**--link-local-ip**[=*[]*]]
 [**--log-driver**[=*[]*]]
 [**--log-opt**[=*[]*]]
 [**-m**|**--memory**[=*MEMORY*]]
@@ -220,6 +221,9 @@ millions of trillions.
    Add link to another container in the form of <name or id>:alias or just
    <name or id> in which case the alias will match the name.
 
+**--link-local-ip**=[]
+   Add one or more link-local IPv4/IPv6 addresses to the container's interface
+
 **--log-driver**="*json-file*|*syslog*|*journald*|*gelf*|*fluentd*|*awslogs*|*splunk*|*etwlogs*|*gcplogs*|*none*"
   Logging driver for container. Default is defined by daemon `--log-driver` flag.
   **Warning**: the `docker logs` command works only for the `json-file` and
@@ -336,7 +340,7 @@ unit, `b` is used. Set LIMIT to `-1` to enable unlimited swap.
    $ docker create -it --storage-opt size=120G fedora /bin/bash
 
    This (size) will allow to set the container rootfs size to 120G at creation time. User cannot pass a size less than the Default BaseFS Size.
-   This option is only available for the `devicemapper`, `btrfs` and `zfs` graphrivers.
+   This option is only available for the `devicemapper`, `btrfs`, and `zfs` graph drivers.
   
 **--stop-signal**=*SIGTERM*
   Signal to stop a container. Default is SIGTERM.

@@ -45,6 +45,7 @@ docker-run - Run a command in a new container
 [**-l**|**--label**[=*[]*]]
 [**--label-file**[=*[]*]]
 [**--link**[=*[]*]]
+[**--link-local-ip**[=*[]*]]
 [**--log-driver**[=*[]*]]
 [**--log-opt**[=*[]*]]
 [**-m**|**--memory**[=*MEMORY*]]
@@ -219,7 +220,7 @@ See **config-json(5)** for documentation on using a configuration file.
    Limit write rate to a device (e.g. --device-write-bps=/dev/sda:1mb)
 
 **--device-write-iops**=[]
-   Limit write rate a a device (e.g. --device-write-iops=/dev/sda:1000)
+   Limit write rate to a device (e.g. --device-write-iops=/dev/sda:1000)
 
 **--dns-search**=[]
    Set custom DNS search domains (Use --dns-search=. if you don't wish to set the search domain)
@@ -325,6 +326,9 @@ uses **--link** when starting the new client container, then the client
 container can access the exposed port via a private networking interface. Docker
 will set some environment variables in the client container to help indicate
 which interface and port to use.
+
+**--link-local-ip**=[]
+   Add one or more link-local IPv4/IPv6 addresses to the container's interface
 
 **--log-driver**="*json-file*|*syslog*|*journald*|*gelf*|*fluentd*|*awslogs*|*splunk*|*etwlogs*|*gcplogs*|*none*"
   Logging driver for container. Default is defined by daemon `--log-driver` flag.
@@ -488,7 +492,7 @@ its root filesystem mounted as read only prohibiting any writes.
    $ docker run -it --storage-opt size=120G fedora /bin/bash
 
    This (size) will allow to set the container rootfs size to 120G at creation time. User cannot pass a size less than the Default BaseFS Size.
-   This option is only available for the `devicemapper`, `btrfs` and `zfs` graphrivers.
+   This option is only available for the `devicemapper`, `btrfs`, and `zfs` graph drivers.
 
 **--stop-signal**=*SIGTERM*
   Signal to stop a container. Default is SIGTERM.

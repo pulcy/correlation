@@ -35,7 +35,7 @@ NETWORK ID          NAME                DRIVER
 cf03ee007fb4        host                host
 ```
 
-Historically, these three networks are  part of Docker's implementation. When
+Historically, these three networks are part of Docker's implementation. When
 you run a container you can use the `--net` flag to specify which network you
 want to run a container on. These three networks are still available to you.
 
@@ -95,7 +95,7 @@ worth looking at the default `bridge` network a bit.
 
 
 ### The default bridge network in detail
-The default `bridge` network is present on all Docker hosts. The `docker network inspect` 
+The default `bridge` network is present on all Docker hosts. The `docker network inspect`
 command returns information about a network:
 
 ```
@@ -519,7 +519,7 @@ functionality in user-defined networks.
 
 - [Work with network commands](work-with-networks.md)
 - [Get started with multi-host networking](get-started-overlay.md)
-- [Managing Data in Containers](../containers/dockervolumes.md)
+- [Managing Data in Containers](../../tutorials/dockervolumes.md)
 - [Docker Machine overview](https://docs.docker.com/machine)
 - [Docker Swarm overview](https://docs.docker.com/swarm)
 - [Investigate the LibNetwork project](https://github.com/docker/libnetwork)

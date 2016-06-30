@@ -1,8 +1,8 @@
-# Setup a Local Cluster
+# Setup a local cluster
 
 For testing and development deployments, the quickest and easiest way is to set up a local cluster. For a production deployment, refer to the [clustering][clustering] section.
 
-## Local Standalone Cluster
+## Local standalone cluster
 
 Deploying an etcd cluster as a standalone cluster is straightforward. Start it with just one command:
 
@@ -26,7 +26,7 @@ $ ./etcdctl get foo
 bar
 ```
 
-## Local Multi-member Cluster
+## Local multi-member cluster
 
 A Procfile is provided to easily set up a local multi-member cluster. Start a multi-member cluster with a few commands:
 
@@ -86,5 +86,5 @@ hello
 To learn more about interacting with etcd, read [interacting with etcd section][interacting].
 
 [interacting]: ./interacting_v3.md
-[clustering]: ./clustering.md
+[clustering]: ../op-guide/clustering.md
 

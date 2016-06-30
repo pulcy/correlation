@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/codegangsta/cli"
 	"github.com/opencontainers/runc/libcontainer"
 	"github.com/opencontainers/runc/libcontainer/cgroups"
+	"github.com/urfave/cli"
 )
 
 // event struct for encoding the event data to json.
@@ -112,11 +112,16 @@ information is displayed once every 5 seconds.`,
 		if err != nil {
 			return err
 		}
+		duration := context.Duration("interval")
+		if duration <= 0 {
+			return fmt.Errorf("duration interval must be greater than 0")
+		}
 		status, err := container.Status()
 		if err != nil {
 			return err
 		}
-		if status == libcontainer.Destroyed {
+		if status == libcontainer.Stopped {
+			fatalf("container with id %s is not running", container.ID())
 			return fmt.Errorf("container with id %s is not running", container.ID())
 		}
 		var (

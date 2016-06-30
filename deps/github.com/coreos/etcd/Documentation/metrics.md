@@ -14,7 +14,7 @@ The metrics under the `etcd` prefix are for monitoring and alerting. They are st
 
 Metrics that are etcd2 related are documented [v2 metrics guide][v2-http-metrics].
 
-### server
+### Server
 
 These metrics describe the status of the etcd server. In order to detect outages or problems for troubleshooting, the server metrics of every production etcd cluster should be closely monitored.
 
@@ -25,7 +25,9 @@ All these metrics are prefixed with `etcd_server_`
 | has_leader                | Whether or not a leader exists. 1 is existence, 0 is not.| Gauge   |
 | leader_changes_seen_total | The number of leader changes seen.                       | Counter |
 | proposals_committed_total | The total number of consensus proposals committed.       | Gauge   |
-
+| proposals_applied_total   | The total number of consensus proposals applied.         | Gauge   |
+| proposals_pending         | The current number of pending proposals.                 | Gauge   |
+| proposals_failed_total    | The total number of failed proposals seen.               | Counter |
 
 `has_leader` indicates whether the member has a leader. If a member does not have a leader, it is
 totally unavailable. If all the members in the cluster do not have any leader, the entire cluster
@@ -35,7 +37,13 @@ is totally unavailable.
 
 `proposals_committed_total` records the total number of consensus proposals committed. This gauge should increase over time if the cluster is healthy. Several healthy members of an etcd cluster may have different total committed proposals at once. This discrepancy may be due to recovering from peers after starting, lagging behind the leader, or being the leader and therefore having the most commits. It is important to monitor this metric across all the members in the cluster; a consistently large lag between a single member and its leader indicates that member is slow or unhealthy.
 
-### disk
+`proposals_applied_total` records the total number of consensus proposals applied. The etcd server applies every committed proposal asynchronously. The difference between `proposals_committed_total` and `proposals_applied_total` should usually be small (within a few thousands even under high load). If the difference between them continues to rise, it indicates that the etcd server is overloaded. This might happen when applying expensive queries like heavy range queries or large txn operations.
+
+`proposals_pending` indicates how many proposals are queued to commit. Rising pending proposals suggests there is a high client load or the member cannot commit proposals.
+
+`proposals_failed_total` are normally related to two issues: temporary failures related to a leader election or longer downtime caused by a loss of quorum in the cluster.
+
+### Disk
 
 These metrics describe the status of the disk operations.
 
@@ -52,7 +60,7 @@ A `backend_commit` is called when etcd commits an incremental snapshot of its mo
 
 High disk operation latencies (`wal_fsync_duration_seconds` or `backend_commit_duration_seconds`) often indicate disk issues. It may cause high request latency or make the cluster unstable.
 
-### network
+### Network
 
 These metrics describe the status of the network.
 
@@ -60,13 +68,15 @@ All these metrics are prefixed with `etcd_network_`
 
 | Name                      | Description                                                        | Type          |
 |---------------------------|--------------------------------------------------------------------|---------------|
-| sent_bytes_total          | The total number of bytes sent to the member with ID `TO`.         | Counter(To)   |
-| received_bytes_total      | The total number of bytes received from the member with ID `From`. | Counter(From) |
-| round_trip_time_seconds   | Round-Trip-Time histogram between members.                         | Histogram(To) |
+| peer_sent_bytes_total           | The total number of bytes sent to the peer with ID `To`.         | Counter(To)   |
+| peer_received_bytes_total       | The total number of bytes received from the peer with ID `From`. | Counter(From) |
+| peer_round_trip_time_seconds    | Round-Trip-Time histogram between peers.                         | Histogram(To) |
+| client_grpc_sent_bytes_total    | The total number of bytes sent to grpc clients.                  | Counter   |
+| client_grpc_received_bytes_total| The total number of bytes received to grpc clients.              | Counter   |
 
-`sent_bytes_total` counts the total number of bytes sent to a specific member. Usually the leader member sends more data than other members since it is responsible for transmitting replicated data.
+`peer_sent_bytes_total` counts the total number of bytes sent to a specific peer. Usually the leader member sends more data than other members since it is responsible for transmitting replicated data.
 
-`received_bytes_total` counts the total number of bytes received from a specific member. Usually follower members receive data only from the leader member.
+`peer_received_bytes_total` counts the total number of bytes received from a specific peer. Usually follower members receive data only from the leader member.
 
 ### gRPC requests
 
@@ -99,21 +109,8 @@ Example Prometheus queries that may be useful from these metrics (across all etc
 
 The metrics under the `etcd_debugging` prefix are for debugging. They are very implementation dependent and volatile. They might be changed or removed without any warning in new etcd releases. Some of the metrics might be moved to the `etcd` prefix when they become more stable.
 
-### etcdserver
 
-| Name                                    | Description                                      | Type      |
-|-----------------------------------------|--------------------------------------------------|-----------|
-| proposal_duration_seconds              | The latency distributions of committing proposal | Histogram |
-| proposals_pending                       | The current number of pending proposals          | Gauge     |
-| proposals_failed_total                   | The total number of failed proposals             | Counter   |
-
-[Proposal][glossary-proposal] duration (`proposal_duration_seconds`) provides a proposal commit latency histogram. The reported latency reflects network and disk IO delays in etcd.
-
-Proposals pending (`proposals_pending`) indicates how many proposals are queued for commit. Rising pending proposals suggests there is a high client load or the cluster is unstable.
-
-Failed proposals (`proposals_failed_total`) are normally related to two issues: temporary failures related to a leader election or longer duration downtime caused by a loss of quorum in the cluster.
-
-### snapshot
+### Snapshot
 
 | Name                                       | Description                                                | Type      |
 |--------------------------------------------|------------------------------------------------------------|-----------|

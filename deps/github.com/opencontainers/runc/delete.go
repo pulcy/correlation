@@ -3,11 +3,14 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
+	"time"
 
-	"github.com/codegangsta/cli"
 	"github.com/opencontainers/runc/libcontainer"
+	"github.com/urfave/cli"
 )
 
 var deleteCommand = cli.Command{
@@ -16,9 +19,10 @@ var deleteCommand = cli.Command{
 	ArgsUsage: `<container-id>
 
 Where "<container-id>" is the name for the instance of the container.
-	 
+
+EXAMPLE:
 For example, if the container id is "ubuntu01" and runc list currently shows the
-status of "ubuntu01" as "destroyed" the following will delete resources held for
+status of "ubuntu01" as "stopped" the following will delete resources held for
 "ubuntu01" removing "ubuntu01" from the runc list of containers:  
 	 
        # runc delete ubuntu01`,
@@ -35,7 +39,26 @@ status of "ubuntu01" as "destroyed" the following will delete resources held for
 			}
 			return nil
 		}
-		destroy(container)
+		s, err := container.Status()
+		if err != nil {
+			return err
+		}
+		switch s {
+		case libcontainer.Stopped:
+			destroy(container)
+		case libcontainer.Created:
+			container.Signal(syscall.SIGKILL)
+			for i := 0; i < 100; i++ {
+				time.Sleep(100 * time.Millisecond)
+				if err := container.Signal(syscall.Signal(0)); err != nil {
+					destroy(container)
+					return nil
+				}
+			}
+			return fmt.Errorf("container init still running")
+		default:
+			return fmt.Errorf("cannot delete container that is not stopped: %s", s)
+		}
 		return nil
 	},
 }

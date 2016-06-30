@@ -676,8 +676,8 @@ func testV3WatchMultipleEventsTxn(t *testing.T, startRev int64) {
 	kvc := toGRPC(clus.RandClient()).KV
 	txn := pb.TxnRequest{}
 	for i := 0; i < 3; i++ {
-		ru := &pb.RequestUnion{}
-		ru.Request = &pb.RequestUnion_RequestPut{
+		ru := &pb.RequestOp{}
+		ru.Request = &pb.RequestOp_RequestPut{
 			RequestPut: &pb.PutRequest{
 				Key: []byte(fmt.Sprintf("foo%d", i)), Value: []byte("bar")}}
 		txn.Success = append(txn.Success, ru)
@@ -974,5 +974,108 @@ func TestWatchWithProgressNotify(t *testing.T) {
 	rok, resp := waitResponse(wStream, testInterval+time.Second)
 	if !rok {
 		t.Errorf("unexpected pb.WatchResponse is received %+v", resp)
+	}
+}
+
+// TestV3WatcMultiOpenhClose opens many watchers concurrently on multiple streams.
+func TestV3WatchClose(t *testing.T) {
+	defer testutil.AfterTest(t)
+	clus := NewClusterV3(t, &ClusterConfig{Size: 1})
+	defer clus.Terminate(t)
+
+	c := clus.Client(0)
+	wapi := toGRPC(c).Watch
+
+	var wg sync.WaitGroup
+	wg.Add(100)
+	for i := 0; i < 100; i++ {
+		go func() {
+			ctx, cancel := context.WithCancel(context.TODO())
+			defer func() {
+				wg.Done()
+				cancel()
+			}()
+			ws, err := wapi.Watch(ctx)
+			if err != nil {
+				return
+			}
+			cr := &pb.WatchCreateRequest{Key: []byte("a")}
+			req := &pb.WatchRequest{
+				RequestUnion: &pb.WatchRequest_CreateRequest{
+					CreateRequest: cr}}
+			ws.Send(req)
+			ws.Recv()
+		}()
+	}
+
+	clus.Members[0].DropConnections()
+	wg.Wait()
+}
+
+// TestV3WatchWithFilter ensures watcher filters out the events correctly.
+func TestV3WatchWithFilter(t *testing.T) {
+	clus := NewClusterV3(t, &ClusterConfig{Size: 1})
+	defer clus.Terminate(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	ws, werr := toGRPC(clus.RandClient()).Watch.Watch(ctx)
+	if werr != nil {
+		t.Fatal(werr)
+	}
+	req := &pb.WatchRequest{RequestUnion: &pb.WatchRequest_CreateRequest{
+		CreateRequest: &pb.WatchCreateRequest{
+			Key:     []byte("foo"),
+			Filters: []pb.WatchCreateRequest_FilterType{pb.WatchCreateRequest_NOPUT},
+		}}}
+	if err := ws.Send(req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ws.Recv(); err != nil {
+		t.Fatal(err)
+	}
+
+	recv := make(chan *pb.WatchResponse)
+	go func() {
+		// check received PUT
+		resp, rerr := ws.Recv()
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		recv <- resp
+	}()
+
+	// put a key with empty value
+	kvc := toGRPC(clus.RandClient()).KV
+	preq := &pb.PutRequest{Key: []byte("foo")}
+	if _, err := kvc.Put(context.TODO(), preq); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-recv:
+		t.Fatal("failed to filter out put event")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	dreq := &pb.DeleteRangeRequest{Key: []byte("foo")}
+	if _, err := kvc.DeleteRange(context.TODO(), dreq); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case resp := <-recv:
+		wevs := []*mvccpb.Event{
+			{
+				Type: mvccpb.DELETE,
+				Kv:   &mvccpb.KeyValue{Key: []byte("foo"), ModRevision: 3},
+			},
+		}
+		if !reflect.DeepEqual(resp.Events, wevs) {
+			t.Fatalf("got %v, expected %v", resp.Events, wevs)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("failed to receive delete event")
 	}
 }

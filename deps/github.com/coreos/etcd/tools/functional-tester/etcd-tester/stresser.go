@@ -16,8 +16,6 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
-	"log"
 	"math/rand"
 	"net"
 	"net/http"
@@ -26,6 +24,7 @@ import (
 
 	clientV2 "github.com/coreos/etcd/client"
 	"github.com/coreos/etcd/etcdserver"
+	"github.com/coreos/etcd/etcdserver/api/v3rpc/rpctypes"
 	pb "github.com/coreos/etcd/etcdserver/etcdserverpb"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -34,7 +33,7 @@ import (
 )
 
 func init() {
-	grpclog.SetLogger(log.New(ioutil.Discard, "", 0))
+	grpclog.SetLogger(plog)
 }
 
 type Stresser interface {
@@ -106,11 +105,24 @@ func (s *stresser) Stress() error {
 						// as well. We want to keep stressing until the cluster elects a
 						// new leader and start processing requests again.
 						shouldContinue = true
+
+					case etcdserver.ErrTimeoutDueToLeaderFail.Error(), etcdserver.ErrTimeout.Error():
+						// This retries when request is triggered at the same time as
+						// leader failure and follower nodes receive time out errors
+						// from losing their leader. Followers should retry to connect
+						// to the new leader.
+						shouldContinue = true
+
 					case etcdserver.ErrStopped.Error():
 						// one of the etcd nodes stopped from failure injection
 						shouldContinue = true
+
 					case transport.ErrConnClosing.Desc:
 						// server closed the transport (failure injected node)
+						shouldContinue = true
+
+					case rpctypes.ErrNotCapable.Error():
+						// capability check has not been done (in the beginning)
 						shouldContinue = true
 
 						// default:
@@ -157,8 +169,6 @@ type stresserV2 struct {
 	KeySuffixRange int
 
 	N int
-	// TODO: not implemented
-	Interval time.Duration
 
 	mu      sync.Mutex
 	failure int

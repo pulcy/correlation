@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/Sirupsen/logrus"
+	"github.com/docker/distribution"
 	"github.com/docker/distribution/digest"
 	"github.com/docker/docker/daemon/graphdriver"
 	"github.com/docker/docker/pkg/archive"
@@ -128,6 +129,11 @@ func (ls *layerStore) loadLayer(layer ChainID) (*roLayer, error) {
 		return nil, fmt.Errorf("failed to get parent for %s: %s", layer, err)
 	}
 
+	descriptor, err := ls.store.GetDescriptor(layer)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get descriptor for %s: %s", layer, err)
+	}
+
 	cl = &roLayer{
 		chainID:    layer,
 		diffID:     diff,
@@ -135,6 +141,7 @@ func (ls *layerStore) loadLayer(layer ChainID) (*roLayer, error) {
 		cacheID:    cacheID,
 		layerStore: ls,
 		references: map[Layer]struct{}{},
+		descriptor: descriptor,
 	}
 
 	if parent != "" {
@@ -228,6 +235,10 @@ func (ls *layerStore) applyTar(tx MetadataTransaction, ts io.Reader, parent stri
 }
 
 func (ls *layerStore) Register(ts io.Reader, parent ChainID) (Layer, error) {
+	return ls.registerWithDescriptor(ts, parent, distribution.Descriptor{})
+}
+
+func (ls *layerStore) registerWithDescriptor(ts io.Reader, parent ChainID, descriptor distribution.Descriptor) (Layer, error) {
 	// err is used to hold the error which will always trigger
 	// cleanup of creates sources but may not be an error returned
 	// to the caller (already exists).
@@ -261,6 +272,7 @@ func (ls *layerStore) Register(ts io.Reader, parent ChainID) (Layer, error) {
 		referenceCount: 1,
 		layerStore:     ls,
 		references:     map[Layer]struct{}{},
+		descriptor:     descriptor,
 	}
 
 	if err = ls.driver.Create(layer.cacheID, pid, "", nil); err != nil {

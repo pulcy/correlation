@@ -8,6 +8,7 @@ import (
 
 	"github.com/docker/docker/cliconfig"
 	"github.com/docker/docker/pkg/reexec"
+	"github.com/docker/engine-api/types/swarm"
 	"github.com/go-check/check"
 )
 
@@ -181,6 +182,64 @@ func (s *DockerDaemonSuite) TearDownTest(c *check.C) {
 	if s.d != nil {
 		s.d.Stop()
 	}
+	s.ds.TearDownTest(c)
+}
+
+const defaultSwarmPort = 2477
+
+func init() {
+	check.Suite(&DockerSwarmSuite{
+		ds: &DockerSuite{},
+	})
+}
+
+type DockerSwarmSuite struct {
+	ds        *DockerSuite
+	daemons   []*SwarmDaemon
+	portIndex int
+}
+
+func (s *DockerSwarmSuite) SetUpTest(c *check.C) {
+	testRequires(c, DaemonIsLinux)
+}
+
+func (s *DockerSwarmSuite) AddDaemon(c *check.C, joinSwarm, manager bool) *SwarmDaemon {
+	d := &SwarmDaemon{
+		Daemon: NewDaemon(c),
+		port:   defaultSwarmPort + s.portIndex,
+	}
+	d.listenAddr = fmt.Sprintf("0.0.0.0:%d", d.port)
+	err := d.StartWithBusybox("--iptables=false") // avoid networking conflicts
+	c.Assert(err, check.IsNil)
+
+	if joinSwarm == true {
+		if len(s.daemons) > 0 {
+			c.Assert(d.Join(swarm.JoinRequest{
+				RemoteAddrs: []string{s.daemons[0].listenAddr},
+				Manager:     manager}), check.IsNil)
+		} else {
+			c.Assert(d.Init(swarm.InitRequest{
+				Spec: swarm.Spec{
+					AcceptancePolicy: autoAcceptPolicy,
+				},
+			}), check.IsNil)
+		}
+	}
+
+	s.portIndex++
+	s.daemons = append(s.daemons, d)
+
+	return d
+}
+
+func (s *DockerSwarmSuite) TearDownTest(c *check.C) {
+	testRequires(c, DaemonIsLinux)
+	for _, d := range s.daemons {
+		d.Stop()
+	}
+	s.daemons = nil
+	s.portIndex = 0
+
 	s.ds.TearDownTest(c)
 }
 

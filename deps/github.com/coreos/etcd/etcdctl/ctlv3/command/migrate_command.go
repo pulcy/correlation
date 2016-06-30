@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/client"
+	etcdErr "github.com/coreos/etcd/error"
 	"github.com/coreos/etcd/etcdserver"
 	pb "github.com/coreos/etcd/etcdserver/etcdserverpb"
 	"github.com/coreos/etcd/mvcc"
@@ -50,13 +51,13 @@ var (
 func NewMigrateCommand() *cobra.Command {
 	mc := &cobra.Command{
 		Use:   "migrate",
-		Short: "migrate",
+		Short: "Migrates keys in a v2 store to a mvcc store",
 		Run:   migrateCommandFunc,
 	}
 
-	mc.Flags().StringVar(&migrateDatadir, "data-dir", "", "Path to the data directory.")
-	mc.Flags().StringVar(&migrateWALdir, "wal-dir", "", "Path to the WAL directory.")
-	mc.Flags().StringVar(&migrateTransformer, "transformer", "", "Path to the user-provided transformer program.")
+	mc.Flags().StringVar(&migrateDatadir, "data-dir", "", "Path to the data directory")
+	mc.Flags().StringVar(&migrateWALdir, "wal-dir", "", "Path to the WAL directory")
+	mc.Flags().StringVar(&migrateTransformer, "transformer", "", "Path to the user-provided transformer program")
 	return mc
 }
 
@@ -194,6 +195,10 @@ func toTTLOptions(r *pb.Request) store.TTLOptionSet {
 func writeStore(w io.Writer, st store.Store) uint64 {
 	all, err := st.Get("/1", true, true)
 	if err != nil {
+		if eerr, ok := err.(*etcdErr.Error); ok && eerr.ErrorCode == etcdErr.EcodeKeyNotFound {
+			fmt.Println("no v2 keys to migrate")
+			os.Exit(0)
+		}
 		ExitWithError(ExitError, err)
 	}
 	return writeKeys(w, all.Node)

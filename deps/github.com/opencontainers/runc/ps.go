@@ -10,23 +10,18 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/codegangsta/cli"
+	"github.com/urfave/cli"
 )
 
 var psCommand = cli.Command{
 	Name:      "ps",
 	Usage:     "ps displays the processes running inside a container",
-	ArgsUsage: `<container-id> <ps options>`,
+	ArgsUsage: `<container-id> [ps options]`,
 	Flags: []cli.Flag{
 		cli.StringFlag{
 			Name:  "format, f",
 			Value: "",
-			Usage: `select one of: ` + formatOptions + `.
-
-The default format is table.  The following will output the processes of a container
-in json format:
-
-    # runc ps -f json`,
+			Usage: `select one of: ` + formatOptions,
 		},
 	},
 	Action: func(context *cli.Context) error {
@@ -35,11 +30,12 @@ in json format:
 			return err
 		}
 
+		pids, err := container.Processes()
+		if err != nil {
+			return err
+		}
+
 		if context.String("format") == "json" {
-			pids, err := container.Processes()
-			if err != nil {
-				return err
-			}
 			if err := json.NewEncoder(os.Stdout).Encode(pids); err != nil {
 				return err
 			}
@@ -62,10 +58,6 @@ in json format:
 			return err
 		}
 
-		pids, err := container.Processes()
-		if err != nil {
-			return err
-		}
 		fmt.Println(lines[0])
 		for _, line := range lines[1:] {
 			if len(line) == 0 {

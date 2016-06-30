@@ -8,8 +8,9 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/codegangsta/cli"
+	"github.com/docker/go-units"
 	"github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/urfave/cli"
 )
 
 func u64Ptr(i uint64) *uint64 { return &i }
@@ -23,7 +24,7 @@ var updateCommand = cli.Command{
 		cli.StringFlag{
 			Name:  "resources, r",
 			Value: "",
-			Usage: `path to the file containing the resources to update or '-' to read from the standard input.
+			Usage: `path to the file containing the resources to update or '-' to read from the standard input
 
 The accepted format is as follow (unchanged values can be omitted):
 
@@ -32,7 +33,8 @@ The accepted format is as follow (unchanged values can be omitted):
     "limit": 0,
     "reservation": 0,
     "swap": 0,
-    "kernel": 0
+    "kernel": 0,
+    "kernelTCP": 0
   },
   "cpu": {
     "shares": 0,
@@ -53,15 +55,15 @@ other options are ignored.
 
 		cli.IntFlag{
 			Name:  "blkio-weight",
-			Usage: "Specifies per cgroup weight, range is from 10 to 1000.",
+			Usage: "Specifies per cgroup weight, range is from 10 to 1000",
 		},
 		cli.StringFlag{
 			Name:  "cpu-period",
-			Usage: "CPU period to be used for hardcapping (in usecs). 0 to use system default.",
+			Usage: "CPU period to be used for hardcapping (in usecs). 0 to use system default",
 		},
 		cli.StringFlag{
 			Name:  "cpu-quota",
-			Usage: "CPU hardcap limit (in usecs). Allowed cpu time in a given period.",
+			Usage: "CPU hardcap limit (in usecs). Allowed cpu time in a given period",
 		},
 		cli.StringFlag{
 			Name:  "cpu-share",
@@ -154,14 +156,9 @@ other options are ignored.
 			}
 
 			for opt, dest := range map[string]*uint64{
-				"cpu-period":         r.CPU.Period,
-				"cpu-quota":          r.CPU.Quota,
-				"cpu-share":          r.CPU.Shares,
-				"kernel-memory":      r.Memory.Kernel,
-				"kernel-memory-tcp":  r.Memory.KernelTCP,
-				"memory":             r.Memory.Limit,
-				"memory-reservation": r.Memory.Reservation,
-				"memory-swap":        r.Memory.Swap,
+				"cpu-period": r.CPU.Period,
+				"cpu-quota":  r.CPU.Quota,
+				"cpu-share":  r.CPU.Shares,
 			} {
 				if val := context.String(opt); val != "" {
 					var err error
@@ -169,6 +166,22 @@ other options are ignored.
 					if err != nil {
 						return fmt.Errorf("invalid value for %s: %s", opt, err)
 					}
+				}
+			}
+
+			for opt, dest := range map[string]*uint64{
+				"kernel-memory":      r.Memory.Kernel,
+				"kernel-memory-tcp":  r.Memory.KernelTCP,
+				"memory":             r.Memory.Limit,
+				"memory-reservation": r.Memory.Reservation,
+				"memory-swap":        r.Memory.Swap,
+			} {
+				if val := context.String(opt); val != "" {
+					v, err := units.RAMInBytes(val)
+					if err != nil {
+						return fmt.Errorf("invalid value for %s: %s", opt, err)
+					}
+					*dest = uint64(v)
 				}
 			}
 		}

@@ -30,23 +30,25 @@ var (
 	getPrefix      bool
 	getFromKey     bool
 	getRev         int64
+	getKeysOnly    bool
 )
 
 // NewGetCommand returns the cobra command for "get".
 func NewGetCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get [options] <key> [range_end]",
-		Short: "Get gets the key or a range of keys.",
+		Short: "Gets the key or a range of keys",
 		Run:   getCommandFunc,
 	}
 
 	cmd.Flags().StringVar(&getConsistency, "consistency", "l", "Linearizable(l) or Serializable(s)")
-	cmd.Flags().StringVar(&getSortOrder, "order", "", "order of results; ASCEND or DESCEND")
-	cmd.Flags().StringVar(&getSortTarget, "sort-by", "", "sort target; CREATE, KEY, MODIFY, VALUE, or VERSION")
-	cmd.Flags().Int64Var(&getLimit, "limit", 0, "maximum number of results")
-	cmd.Flags().BoolVar(&getPrefix, "prefix", false, "get keys with matching prefix")
-	cmd.Flags().BoolVar(&getFromKey, "from-key", false, "get keys that are greater than or equal to the given key")
-	cmd.Flags().Int64Var(&getRev, "rev", 0, "specify the kv revision")
+	cmd.Flags().StringVar(&getSortOrder, "order", "", "Order of results; ASCEND or DESCEND")
+	cmd.Flags().StringVar(&getSortTarget, "sort-by", "", "Sort target; CREATE, KEY, MODIFY, VALUE, or VERSION")
+	cmd.Flags().Int64Var(&getLimit, "limit", 0, "Maximum number of results")
+	cmd.Flags().BoolVar(&getPrefix, "prefix", false, "Get keys with matching prefix")
+	cmd.Flags().BoolVar(&getFromKey, "from-key", false, "Get keys that are greater than or equal to the given key")
+	cmd.Flags().Int64Var(&getRev, "rev", 0, "Specify the kv revision")
+	cmd.Flags().BoolVar(&getKeysOnly, "keys-only", false, "Get only the keys")
 	return cmd
 }
 
@@ -142,6 +144,10 @@ func getGetOp(cmd *cobra.Command, args []string) (string, []clientv3.OpOption) {
 			key = "\x00"
 		}
 		opts = append(opts, clientv3.WithFromKey())
+	}
+
+	if getKeysOnly {
+		opts = append(opts, clientv3.WithKeysOnly())
 	}
 
 	return key, opts

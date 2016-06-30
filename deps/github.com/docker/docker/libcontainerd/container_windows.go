@@ -37,21 +37,25 @@ func (ctr *container) newProcess(friendlyName string) *process {
 
 func (ctr *container) start() error {
 	var err error
+	isServicing := false
+
+	for _, option := range ctr.options {
+		if s, ok := option.(*ServicingOption); ok && s.IsServicing {
+			isServicing = true
+		}
+	}
 
 	// Start the container.  If this is a servicing container, this call will block
 	// until the container is done with the servicing execution.
 	logrus.Debugln("Starting container ", ctr.containerID)
 	if err = ctr.hcsContainer.Start(); err != nil {
-		logrus.Errorf("Failed to start compute system: %s", err)
-		return err
-	}
-
-	for _, option := range ctr.options {
-		if s, ok := option.(*ServicingOption); ok && s.IsServicing {
-			// Since the servicing operation is complete when StartCommputeSystem returns without error,
-			// we can shutdown (which triggers merge) and exit early.
-			return ctr.shutdown()
+		logrus.Errorf("Failed to start container: %s", err)
+		if err := ctr.terminate(); err != nil {
+			logrus.Errorf("Failed to cleanup after a failed Start. %s", err)
+		} else {
+			logrus.Debugln("Cleaned up after failed Start by calling Terminate")
 		}
+		return err
 	}
 
 	// Note we always tell HCS to
@@ -63,9 +67,9 @@ func (ctr *container) start() error {
 		EmulateConsole:   ctr.ociSpec.Process.Terminal,
 		WorkingDirectory: ctr.ociSpec.Process.Cwd,
 		ConsoleSize:      ctr.ociSpec.Process.InitialConsoleSize,
-		CreateStdInPipe:  true,
-		CreateStdOutPipe: true,
-		CreateStdErrPipe: !ctr.ociSpec.Process.Terminal,
+		CreateStdInPipe:  !isServicing,
+		CreateStdOutPipe: !isServicing,
+		CreateStdErrPipe: !ctr.ociSpec.Process.Terminal && !isServicing,
 	}
 
 	// Configure the environment for the process
@@ -76,8 +80,8 @@ func (ctr *container) start() error {
 	hcsProcess, err := ctr.hcsContainer.CreateProcess(createProcessParms)
 	if err != nil {
 		logrus.Errorf("CreateProcess() failed %s", err)
-		if err2 := ctr.terminate(); err2 != nil {
-			logrus.Debugf("Failed to cleanup after a failed CreateProcess. Ignoring this. %s", err2)
+		if err := ctr.terminate(); err != nil {
+			logrus.Errorf("Failed to cleanup after a failed CreateProcess. %s", err)
 		} else {
 			logrus.Debugln("Cleaned up after failed CreateProcess by calling Terminate")
 		}
@@ -90,13 +94,26 @@ func (ctr *container) start() error {
 	pid := hcsProcess.Pid()
 	ctr.process.hcsProcess = hcsProcess
 
+	// If this is a servicing container, wait on the process synchronously here and
+	// immediately call shutdown/terminate when it returns.
+	if isServicing {
+		exitCode := ctr.waitProcessExitCode(&ctr.process)
+
+		if exitCode != 0 {
+			logrus.Warnf("Servicing container %s returned non-zero exit code %d", ctr.containerID, exitCode)
+			return ctr.terminate()
+		}
+
+		return ctr.shutdown()
+	}
+
 	var stdout, stderr io.ReadCloser
 	var stdin io.WriteCloser
 	stdin, stdout, stderr, err = hcsProcess.Stdio()
 	if err != nil {
 		logrus.Errorf("failed to get stdio pipes: %s", err)
 		if err := ctr.terminate(); err != nil {
-			logrus.Debugf("Failed to cleanup after a failed CreateProcess. Ignoring this. %s", err)
+			logrus.Errorf("Failed to cleanup after a failed Stdio. %s", err)
 		}
 		return err
 	}
@@ -140,17 +157,13 @@ func (ctr *container) start() error {
 
 }
 
-// waitExit runs as a goroutine waiting for the process to exit. It's
-// equivalent to (in the linux containerd world) where events come in for
-// state change notifications from containerd.
-func (ctr *container) waitExit(process *process, isFirstProcessToStart bool) error {
-	logrus.Debugln("waitExit on pid", process.systemPid)
-
+// waitProcessExitCode will wait for the given process to exit and return its error code.
+func (ctr *container) waitProcessExitCode(process *process) int {
 	// Block indefinitely for the process to exit.
 	err := process.hcsProcess.Wait()
 	if err != nil {
 		if herr, ok := err.(*hcsshim.ProcessError); ok && herr.Err != syscall.ERROR_BROKEN_PIPE {
-			logrus.Warnf("WaitForProcessInComputeSystem failed (container may have been killed): %s", err)
+			logrus.Warnf("Wait failed (container may have been killed): %s", err)
 		}
 		// Fall through here, do not return. This ensures we attempt to continue the
 		// shutdown in HCS and tell the docker engine that the process/container
@@ -162,6 +175,10 @@ func (ctr *container) waitExit(process *process, isFirstProcessToStart bool) err
 		if herr, ok := err.(*hcsshim.ProcessError); ok && herr.Err != syscall.ERROR_BROKEN_PIPE {
 			logrus.Warnf("Unable to get exit code from container %s", ctr.containerID)
 		}
+		// Since we got an error retrieving the exit code, make sure that the code we return
+		// doesn't incorrectly indicate success.
+		exitCode = -1
+
 		// Fall through here, do not return. This ensures we attempt to continue the
 		// shutdown in HCS and tell the docker engine that the process/container
 		// has exited to avoid a container being dropped on the floor.
@@ -170,6 +187,17 @@ func (ctr *container) waitExit(process *process, isFirstProcessToStart bool) err
 	if err := process.hcsProcess.Close(); err != nil {
 		logrus.Error(err)
 	}
+
+	return exitCode
+}
+
+// waitExit runs as a goroutine waiting for the process to exit. It's
+// equivalent to (in the linux containerd world) where events come in for
+// state change notifications from containerd.
+func (ctr *container) waitExit(process *process, isFirstProcessToStart bool) error {
+	logrus.Debugln("waitExit on pid", process.systemPid)
+
+	exitCode := ctr.waitProcessExitCode(process)
 
 	// Assume the container has exited
 	si := StateInfo{
@@ -230,20 +258,17 @@ func (ctr *container) waitExit(process *process, isFirstProcessToStart bool) err
 		// Remove process from list if we have exited
 		// We need to do so here in case the Message Handler decides to restart it.
 		if si.State == StateExit {
-			if err := ctr.hcsContainer.Close(); err != nil {
-				logrus.Error(err)
-			}
 			ctr.client.deleteContainer(ctr.friendlyName)
 		}
 	}
 
 	// Call into the backend to notify it of the state change.
-	logrus.Debugf("waitExit() calling backend.StateChanged %v", si)
+	logrus.Debugf("waitExit() calling backend.StateChanged %+v", si)
 	if err := ctr.client.backend.StateChanged(ctr.containerID, si); err != nil {
 		logrus.Error(err)
 	}
 
-	logrus.Debugln("waitExit() completed OK")
+	logrus.Debugf("waitExit() completed OK, %+v", si)
 	return nil
 }
 
@@ -253,6 +278,8 @@ func (ctr *container) shutdown() error {
 	if err == hcsshim.ErrVmcomputeOperationPending {
 		// Explicit timeout to avoid a (remote) possibility that shutdown hangs indefinitely.
 		err = ctr.hcsContainer.WaitTimeout(shutdownTimeout)
+	} else if err == hcsshim.ErrVmcomputeAlreadyStopped {
+		err = nil
 	}
 
 	if err != nil {
@@ -272,9 +299,12 @@ func (ctr *container) terminate() error {
 
 	if err == hcsshim.ErrVmcomputeOperationPending {
 		err = ctr.hcsContainer.WaitTimeout(terminateTimeout)
+	} else if err == hcsshim.ErrVmcomputeAlreadyStopped {
+		err = nil
 	}
 
 	if err != nil {
+		logrus.Debugf("error terminating container %s %v", ctr.containerID, err)
 		return err
 	}
 

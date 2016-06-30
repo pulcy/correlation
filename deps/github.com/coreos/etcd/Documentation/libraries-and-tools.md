@@ -1,4 +1,4 @@
-# Libraries and Tools
+# Libraries and tools
 
 **Tools**
 
@@ -93,6 +93,10 @@
 
 - [efrecon/etcd-tcl](https://github.com/efrecon/etcd-tcl) - Supports v2, except wait.
 
+**Gradle Plugins**
+
+- [gradle-etcd-rest-plugin](https://github.com/cdancy/gradle-etcd-rest-plugin) - Supports v2
+
 **Chef Integration**
 
 - [coderanger/etcd-chef](https://github.com/coderanger/etcd-chef)
@@ -128,3 +132,4 @@
 - [spf13/viper](https://github.com/spf13/viper) - Go configuration library, reads values from ENV, pflags, files, and etcd with optional encryption
 - [lytics/metafora](https://github.com/lytics/metafora) - Go distributed task library
 - [ryandoyle/nss-etcd](https://github.com/ryandoyle/nss-etcd) - A GNU libc NSS module for resolving names from etcd.
+- [Gru](https://github.com/dnaeon/gru) - Orchestration made easy with Go

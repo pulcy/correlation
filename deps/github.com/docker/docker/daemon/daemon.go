@@ -14,7 +14,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -27,16 +26,13 @@ import (
 	"github.com/docker/docker/container"
 	"github.com/docker/docker/daemon/events"
 	"github.com/docker/docker/daemon/exec"
-	"github.com/docker/docker/errors"
 	"github.com/docker/engine-api/types"
 	containertypes "github.com/docker/engine-api/types/container"
-	networktypes "github.com/docker/engine-api/types/network"
-	"github.com/docker/engine-api/types/strslice"
+	"github.com/docker/libnetwork/cluster"
 	// register graph drivers
 	_ "github.com/docker/docker/daemon/graphdriver/register"
 	dmetadata "github.com/docker/docker/distribution/metadata"
 	"github.com/docker/docker/distribution/xfer"
-	"github.com/docker/docker/dockerversion"
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/layer"
 	"github.com/docker/docker/libcontainerd"
@@ -58,14 +54,16 @@ import (
 	volumedrivers "github.com/docker/docker/volume/drivers"
 	"github.com/docker/docker/volume/local"
 	"github.com/docker/docker/volume/store"
-	"github.com/docker/go-connections/nat"
 	"github.com/docker/libnetwork"
 	nwconfig "github.com/docker/libnetwork/config"
 	"github.com/docker/libtrust"
-	"golang.org/x/net/context"
 )
 
 var (
+	// DefaultRuntimeBinary is the default runtime to be used by
+	// containerd if none is specified
+	DefaultRuntimeBinary = "docker-runc"
+
 	errSystemNotSupported = fmt.Errorf("The Docker daemon is not supported on this platform.")
 )
 
@@ -99,7 +97,9 @@ type Daemon struct {
 	nameIndex                 *registrar.Registrar
 	linkIndex                 *linkIndex
 	containerd                libcontainerd.Client
+	containerdRemote          libcontainerd.Remote
 	defaultIsolation          containertypes.Isolation // Default isolation mode on Windows
+	clusterProvider           cluster.Provider
 }
 
 func (daemon *Daemon) restore() error {
@@ -117,11 +117,13 @@ func (daemon *Daemon) restore() error {
 		return err
 	}
 
+	containerCount := 0
 	for _, v := range dir {
 		id := v.Name()
 		container, err := daemon.load(id)
 		if !debug && logrus.GetLevel() == logrus.InfoLevel {
 			fmt.Print(".")
+			containerCount++
 		}
 		if err != nil {
 			logrus.Errorf("Failed to load container %v: %v", id, err)
@@ -146,6 +148,7 @@ func (daemon *Daemon) restore() error {
 
 	var migrateLegacyLinks bool
 	restartContainers := make(map[*container.Container]chan struct{})
+	activeSandboxes := make(map[string]interface{})
 	for _, c := range containers {
 		if err := daemon.registerName(c); err != nil {
 			logrus.Errorf("Failed to register container %s: %s", c.ID, err)
@@ -154,6 +157,16 @@ func (daemon *Daemon) restore() error {
 		if err := daemon.Register(c); err != nil {
 			logrus.Errorf("Failed to register container %s: %s", c.ID, err)
 			continue
+		}
+
+		// The LogConfig.Type is empty if the container was created before docker 1.12 with default log driver.
+		// We should rewrite it to use the daemon defaults.
+		// Fixes https://github.com/docker/docker/issues/22536
+		if c.HostConfig.LogConfig.Type == "" {
+			if err := daemon.mergeAndVerifyLogConfig(&c.HostConfig.LogConfig); err != nil {
+				logrus.Errorf("Failed to verify log config for container %s: %q", c.ID, err)
+				continue
+			}
 		}
 	}
 	var wg sync.WaitGroup
@@ -168,6 +181,16 @@ func (daemon *Daemon) restore() error {
 					logrus.Errorf("Failed to restore with containerd: %q", err)
 					return
 				}
+				if !c.HostConfig.NetworkMode.IsContainer() && c.IsRunning() {
+					options, err := daemon.buildSandboxOptions(c)
+					if err != nil {
+						logrus.Warnf("Failed build sandbox option to restore container %s: %v", c.ID, err)
+					}
+					mapLock.Lock()
+					activeSandboxes[c.NetworkSettings.SandboxID] = options
+					mapLock.Unlock()
+				}
+
 			}
 			// fixme: only if not running
 			// get list of containers we need to restart
@@ -199,6 +222,10 @@ func (daemon *Daemon) restore() error {
 		}(c)
 	}
 	wg.Wait()
+	daemon.netController, err = daemon.initNetworkController(daemon.configStore, activeSandboxes)
+	if err != nil {
+		return fmt.Errorf("Error initializing network controller: %v", err)
+	}
 
 	// migrate any legacy links from sqlite
 	linkdbFile := filepath.Join(daemon.root, "linkgraph.db")
@@ -281,7 +308,7 @@ func (daemon *Daemon) restore() error {
 	group.Wait()
 
 	if !debug {
-		if logrus.GetLevel() == logrus.InfoLevel {
+		if logrus.GetLevel() == logrus.InfoLevel && containerCount > 0 {
 			fmt.Println()
 		}
 		logrus.Info("Loading containers: done.")
@@ -317,35 +344,6 @@ func (daemon *Daemon) waitForNetworks(c *container.Container) {
 	}
 }
 
-func (daemon *Daemon) generateHostname(id string, config *containertypes.Config) {
-	// Generate default hostname
-	if config.Hostname == "" {
-		config.Hostname = id[:12]
-	}
-}
-
-func (daemon *Daemon) getEntrypointAndArgs(configEntrypoint strslice.StrSlice, configCmd strslice.StrSlice) (string, []string) {
-	if len(configEntrypoint) != 0 {
-		return configEntrypoint[0], append(configEntrypoint[1:], configCmd...)
-	}
-	return configCmd[0], configCmd[1:]
-}
-
-// GetLabels for a container or image id
-func (daemon *Daemon) GetLabels(id string) map[string]string {
-	// TODO: TestCase
-	container := daemon.containers.Get(id)
-	if container != nil {
-		return container.Config.Labels
-	}
-
-	img, err := daemon.GetImage(id)
-	if err == nil {
-		return img.ContainerConfig.Labels
-	}
-	return nil
-}
-
 func (daemon *Daemon) children(c *container.Container) map[string]*container.Container {
 	return daemon.linkIndex.children(c)
 }
@@ -369,10 +367,30 @@ func (daemon *Daemon) registerLink(parent, child *container.Container, alias str
 	return nil
 }
 
+// SetClusterProvider sets a component for quering the current cluster state.
+func (daemon *Daemon) SetClusterProvider(clusterProvider cluster.Provider) {
+	daemon.clusterProvider = clusterProvider
+	daemon.netController.SetClusterProvider(clusterProvider)
+}
+
+// IsSwarmCompatible verifies if the current daemon
+// configuration is compatible with the swarm mode
+func (daemon *Daemon) IsSwarmCompatible() error {
+	if daemon.configStore == nil {
+		return nil
+	}
+	return daemon.configStore.isSwarmCompatible()
+}
+
 // NewDaemon sets up everything for the daemon to be able to service
 // requests from the webserver.
 func NewDaemon(config *Config, registryService registry.Service, containerdRemote libcontainerd.Remote) (daemon *Daemon, err error) {
 	setDefaultMtu(config)
+
+	// Ensure that we have a correct root key limit for launching containers.
+	if err := ModifyRootKeyLimit(); err != nil {
+		logrus.Warnf("unable to modify root key limit, number of containers could be limitied by this quota: %v", err)
+	}
 
 	// Ensure we have compatible and valid configuration options
 	if err := verifyDaemonSettings(config); err != nil {
@@ -499,7 +517,7 @@ func NewDaemon(config *Config, registryService registry.Service, containerdRemot
 	}
 
 	// Configure the volumes driver
-	volStore, err := configureVolumes(config, rootUID, rootGID)
+	volStore, err := d.configureVolumes(rootUID, rootGID)
 	if err != nil {
 		return nil, err
 	}
@@ -543,11 +561,6 @@ func NewDaemon(config *Config, registryService registry.Service, containerdRemot
 		return nil, err
 	}
 
-	d.netController, err = d.initNetworkController(config)
-	if err != nil {
-		return nil, fmt.Errorf("Error initializing network controller: %v", err)
-	}
-
 	sysInfo := sysinfo.New(false)
 	// Check if Devices cgroup is mounted, it is hard requirement for container security,
 	// on Linux.
@@ -578,6 +591,7 @@ func NewDaemon(config *Config, registryService registry.Service, containerdRemot
 
 	d.nameIndex = registrar.NewRegistrar()
 	d.linkIndex = newLinkIndex()
+	d.containerdRemote = containerdRemote
 
 	go d.execCommandGC()
 
@@ -635,6 +649,11 @@ func (daemon *Daemon) shutdownContainer(c *container.Container) error {
 // Shutdown stops the daemon.
 func (daemon *Daemon) Shutdown() error {
 	daemon.shutdown = true
+	// Keep mounts and networking running on daemon shutdown if
+	// we are to keep containers running and restore them.
+	if daemon.configStore.LiveRestore {
+		return nil
+	}
 	if daemon.containers != nil {
 		logrus.Debug("starting clean shutdown of all containers...")
 		daemon.containers.ApplyAll(func(c *container.Container) {
@@ -762,37 +781,6 @@ func tempDir(rootDir string, rootUID, rootGID int) (string, error) {
 	return tmpDir, idtools.MkdirAllAs(tmpDir, 0700, rootUID, rootGID)
 }
 
-func (daemon *Daemon) setSecurityOptions(container *container.Container, hostConfig *containertypes.HostConfig) error {
-	container.Lock()
-	defer container.Unlock()
-	return parseSecurityOpt(container, hostConfig)
-}
-
-func (daemon *Daemon) setHostConfig(container *container.Container, hostConfig *containertypes.HostConfig) error {
-	// Do not lock while creating volumes since this could be calling out to external plugins
-	// Don't want to block other actions, like `docker ps` because we're waiting on an external plugin
-	if err := daemon.registerMountPoints(container, hostConfig); err != nil {
-		return err
-	}
-
-	container.Lock()
-	defer container.Unlock()
-
-	// Register any links from the host config before starting the container
-	if err := daemon.registerLinks(container, hostConfig); err != nil {
-		return err
-	}
-
-	// make sure links is not nil
-	// this ensures that on the next daemon restart we don't try to migrate from legacy sqlite links
-	if hostConfig.Links == nil {
-		hostConfig.Links = []string{}
-	}
-
-	container.HostConfig = hostConfig
-	return container.ToDisk()
-}
-
 func (daemon *Daemon) setupInitLayer(initPath string) error {
 	rootUID, rootGID := daemon.GetRemappedUIDGID()
 	return setupInitLayer(initPath, rootUID, rootGID)
@@ -806,159 +794,21 @@ func setDefaultMtu(config *Config) {
 	config.Mtu = defaultNetworkMtu
 }
 
-// verifyContainerSettings performs validation of the hostconfig and config
-// structures.
-func (daemon *Daemon) verifyContainerSettings(hostConfig *containertypes.HostConfig, config *containertypes.Config, update bool) ([]string, error) {
-
-	// First perform verification of settings common across all platforms.
-	if config != nil {
-		if config.WorkingDir != "" {
-			config.WorkingDir = filepath.FromSlash(config.WorkingDir) // Ensure in platform semantics
-			if !system.IsAbs(config.WorkingDir) {
-				return nil, fmt.Errorf("The working directory '%s' is invalid. It needs to be an absolute path", config.WorkingDir)
-			}
-		}
-
-		if len(config.StopSignal) > 0 {
-			_, err := signal.ParseSignal(config.StopSignal)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		// Validate if the given hostname is RFC 1123 (https://tools.ietf.org/html/rfc1123) compliant.
-		if len(config.Hostname) > 0 {
-			// RFC1123 specifies that 63 bytes is the maximium length
-			// Windows has the limitation of 63 bytes in length
-			// Linux hostname is limited to HOST_NAME_MAX=64, not not including the terminating null byte.
-			// We limit the length to 63 bytes here to match RFC1035 and RFC1123.
-			matched, _ := regexp.MatchString("^(([[:alnum:]]|[[:alnum:]][[:alnum:]\\-]*[[:alnum:]])\\.)*([[:alnum:]]|[[:alnum:]][[:alnum:]\\-]*[[:alnum:]])$", config.Hostname)
-			if len(config.Hostname) > 63 || !matched {
-				return nil, fmt.Errorf("invalid hostname format: %s", config.Hostname)
-			}
-		}
-	}
-
-	if hostConfig == nil {
-		return nil, nil
-	}
-
-	for port := range hostConfig.PortBindings {
-		_, portStr := nat.SplitProtoPort(string(port))
-		if _, err := nat.ParsePort(portStr); err != nil {
-			return nil, fmt.Errorf("Invalid port specification: %q", portStr)
-		}
-		for _, pb := range hostConfig.PortBindings[port] {
-			_, err := nat.NewPort(nat.SplitProtoPort(pb.HostPort))
-			if err != nil {
-				return nil, fmt.Errorf("Invalid port specification: %q", pb.HostPort)
-			}
-		}
-	}
-
-	// Now do platform-specific verification
-	return verifyPlatformContainerSettings(daemon, hostConfig, config, update)
-}
-
-// Checks if the client set configurations for more than one network while creating a container
-func (daemon *Daemon) verifyNetworkingConfig(nwConfig *networktypes.NetworkingConfig) error {
-	if nwConfig == nil || len(nwConfig.EndpointsConfig) <= 1 {
-		return nil
-	}
-	l := make([]string, 0, len(nwConfig.EndpointsConfig))
-	for k := range nwConfig.EndpointsConfig {
-		l = append(l, k)
-	}
-	err := fmt.Errorf("Container cannot be connected to network endpoints: %s", strings.Join(l, ", "))
-	return errors.NewBadRequestError(err)
-}
-
-func configureVolumes(config *Config, rootUID, rootGID int) (*store.VolumeStore, error) {
-	volumesDriver, err := local.New(config.Root, rootUID, rootGID)
+func (daemon *Daemon) configureVolumes(rootUID, rootGID int) (*store.VolumeStore, error) {
+	volumesDriver, err := local.New(daemon.configStore.Root, rootUID, rootGID)
 	if err != nil {
 		return nil, err
 	}
 
-	volumedrivers.Register(volumesDriver, volumesDriver.Name())
-	return store.New(config.Root)
-}
-
-// AuthenticateToRegistry checks the validity of credentials in authConfig
-func (daemon *Daemon) AuthenticateToRegistry(ctx context.Context, authConfig *types.AuthConfig) (string, string, error) {
-	return daemon.RegistryService.Auth(ctx, authConfig, dockerversion.DockerUserAgent(ctx))
+	if !volumedrivers.Register(volumesDriver, volumesDriver.Name()) {
+		return nil, fmt.Errorf("local volume driver could not be registered")
+	}
+	return store.New(daemon.configStore.Root)
 }
 
 // IsShuttingDown tells whether the daemon is shutting down or not
 func (daemon *Daemon) IsShuttingDown() bool {
 	return daemon.shutdown
-}
-
-// GetContainerStats collects all the stats published by a container
-func (daemon *Daemon) GetContainerStats(container *container.Container) (*types.StatsJSON, error) {
-	stats, err := daemon.stats(container)
-	if err != nil {
-		return nil, err
-	}
-
-	if stats.Networks, err = daemon.getNetworkStats(container); err != nil {
-		return nil, err
-	}
-
-	return stats, nil
-}
-
-// Resolve Network SandboxID in case the container reuse another container's network stack
-func (daemon *Daemon) getNetworkSandboxID(c *container.Container) (string, error) {
-	curr := c
-	for curr.HostConfig.NetworkMode.IsContainer() {
-		containerID := curr.HostConfig.NetworkMode.ConnectedContainer()
-		connected, err := daemon.GetContainer(containerID)
-		if err != nil {
-			return "", fmt.Errorf("Could not get container for %s", containerID)
-		}
-		curr = connected
-	}
-	return curr.NetworkSettings.SandboxID, nil
-}
-
-func (daemon *Daemon) getNetworkStats(c *container.Container) (map[string]types.NetworkStats, error) {
-	sandboxID, err := daemon.getNetworkSandboxID(c)
-	if err != nil {
-		return nil, err
-	}
-
-	sb, err := daemon.netController.SandboxByID(sandboxID)
-	if err != nil {
-		return nil, err
-	}
-
-	lnstats, err := sb.Statistics()
-	if err != nil {
-		return nil, err
-	}
-
-	stats := make(map[string]types.NetworkStats)
-	// Convert libnetwork nw stats into engine-api stats
-	for ifName, ifStats := range lnstats {
-		stats[ifName] = types.NetworkStats{
-			RxBytes:   ifStats.RxBytes,
-			RxPackets: ifStats.RxPackets,
-			RxErrors:  ifStats.RxErrors,
-			RxDropped: ifStats.RxDropped,
-			TxBytes:   ifStats.TxBytes,
-			TxPackets: ifStats.TxPackets,
-			TxErrors:  ifStats.TxErrors,
-			TxDropped: ifStats.TxDropped,
-		}
-	}
-
-	return stats, nil
-}
-
-// newBaseContainer creates a new container with its initial
-// configuration based on the root storage from the daemon.
-func (daemon *Daemon) newBaseContainer(id string) *container.Container {
-	return container.NewBaseContainer(id, daemon.containerRoot(id))
 }
 
 // initDiscovery initializes the discovery watcher for this daemon.
@@ -989,11 +839,26 @@ func (daemon *Daemon) initDiscovery(config *Config) error {
 // - Daemon max concurrent downloads
 // - Daemon max concurrent uploads
 // - Cluster discovery (reconfigure and restart).
+// - Daemon live restore
 func (daemon *Daemon) Reload(config *Config) error {
+	var err error
+	// used to hold reloaded changes
+	attributes := map[string]string{}
+
+	// We need defer here to ensure the lock is released as
+	// daemon.SystemInfo() will try to get it too
+	defer func() {
+		if err == nil {
+			daemon.LogDaemonEventWithAttributes("reload", attributes)
+		}
+	}()
+
 	daemon.configStore.reloadLock.Lock()
 	defer daemon.configStore.reloadLock.Unlock()
 
-	if err := daemon.reloadClusterDiscovery(config); err != nil {
+	daemon.platformReload(config, &attributes)
+
+	if err = daemon.reloadClusterDiscovery(config); err != nil {
 		return err
 	}
 
@@ -1002,6 +867,13 @@ func (daemon *Daemon) Reload(config *Config) error {
 	}
 	if config.IsValueSet("debug") {
 		daemon.configStore.Debug = config.Debug
+	}
+	if config.IsValueSet("live-restore") {
+		daemon.configStore.LiveRestore = config.LiveRestore
+		if err := daemon.containerdRemote.UpdateOptions(libcontainerd.WithLiveRestore(config.LiveRestore)); err != nil {
+			return err
+		}
+
 	}
 
 	// If no value is set for max-concurrent-downloads we assume it is the default value
@@ -1031,7 +903,6 @@ func (daemon *Daemon) Reload(config *Config) error {
 	}
 
 	// We emit daemon reload event here with updatable configurations
-	attributes := map[string]string{}
 	attributes["debug"] = fmt.Sprintf("%t", daemon.configStore.Debug)
 	attributes["cluster-store"] = daemon.configStore.ClusterStore
 	if daemon.configStore.ClusterOpts != nil {
@@ -1049,7 +920,6 @@ func (daemon *Daemon) Reload(config *Config) error {
 	}
 	attributes["max-concurrent-downloads"] = fmt.Sprintf("%d", *daemon.configStore.MaxConcurrentDownloads)
 	attributes["max-concurrent-uploads"] = fmt.Sprintf("%d", *daemon.configStore.MaxConcurrentUploads)
-	daemon.LogDaemonEventWithAttributes("reload", attributes)
 
 	return nil
 }
@@ -1064,6 +934,12 @@ func (daemon *Daemon) reloadClusterDiscovery(config *Config) error {
 		}
 		newAdvertise, err = parseClusterAdvertiseSettings(newClusterStore, config.ClusterAdvertise)
 		if err != nil && err != errDiscoveryDisabled {
+			return err
+		}
+	}
+
+	if daemon.clusterProvider != nil {
+		if err := config.isSwarmCompatible(); err != nil {
 			return err
 		}
 	}
@@ -1099,7 +975,7 @@ func (daemon *Daemon) reloadClusterDiscovery(config *Config) error {
 	if daemon.netController == nil {
 		return nil
 	}
-	netOptions, err := daemon.networkOptions(daemon.configStore)
+	netOptions, err := daemon.networkOptions(daemon.configStore, nil)
 	if err != nil {
 		logrus.Warnf("Failed to reload configuration with network controller: %v", err)
 		return nil
@@ -1112,18 +988,11 @@ func (daemon *Daemon) reloadClusterDiscovery(config *Config) error {
 	return nil
 }
 
-func validateID(id string) error {
-	if id == "" {
-		return fmt.Errorf("Invalid empty id")
-	}
-	return nil
-}
-
 func isBridgeNetworkDisabled(config *Config) bool {
 	return config.bridgeConfig.Iface == disableNetworkBridge
 }
 
-func (daemon *Daemon) networkOptions(dconfig *Config) ([]nwconfig.Option, error) {
+func (daemon *Daemon) networkOptions(dconfig *Config, activeSandboxes map[string]interface{}) ([]nwconfig.Option, error) {
 	options := []nwconfig.Option{}
 	if dconfig == nil {
 		return options, nil
@@ -1158,6 +1027,11 @@ func (daemon *Daemon) networkOptions(dconfig *Config) ([]nwconfig.Option, error)
 
 	options = append(options, nwconfig.OptionLabels(dconfig.Labels))
 	options = append(options, driverOptions(dconfig)...)
+
+	if daemon.configStore != nil && daemon.configStore.LiveRestore && len(activeSandboxes) != 0 {
+		options = append(options, nwconfig.OptionActiveSandboxes(activeSandboxes))
+	}
+
 	return options, nil
 }
 

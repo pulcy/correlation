@@ -25,8 +25,8 @@ import (
 	"os"
 	"reflect"
 	"sort"
-	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -52,14 +52,18 @@ const (
 	tickDuration   = 10 * time.Millisecond
 	clusterName    = "etcd"
 	requestTimeout = 20 * time.Second
+
+	basePort     = 21000
+	urlScheme    = "unix"
+	urlSchemeTLS = "unixs"
 )
 
 var (
 	electionTicks = 10
 
-	// integration test uses well-known ports to listen for each running member,
-	// which ensures restarted member could listen on specific port again.
-	nextListenPort int64 = 21000
+	// integration test uses unique ports, counting up, to listen for each
+	// member, ensuring restarted members can listen on the same port again.
+	localListenCount int64 = 0
 
 	testTLSInfo = transport.TLSInfo{
 		KeyFile:        "./fixtures/server.key.insecure",
@@ -85,6 +89,18 @@ type cluster struct {
 	Members []*member
 }
 
+func init() {
+	// manually enable v3 capability since we know the cluster members all support v3.
+	api.EnableCapability(api.V3rpcCapability)
+}
+
+func schemeFromTLSInfo(tls *transport.TLSInfo) string {
+	if tls == nil {
+		return urlScheme
+	}
+	return urlSchemeTLS
+}
+
 func (c *cluster) fillClusterForMembers() error {
 	if c.cfg.DiscoveryURL != "" {
 		// cluster will be discovered
@@ -93,10 +109,7 @@ func (c *cluster) fillClusterForMembers() error {
 
 	addrs := make([]string, 0)
 	for _, m := range c.Members {
-		scheme := "http"
-		if m.PeerTLSInfo != nil {
-			scheme = "https"
-		}
+		scheme := schemeFromTLSInfo(m.PeerTLSInfo)
 		for _, l := range m.PeerListeners {
 			addrs = append(addrs, fmt.Sprintf("%s=%s://%s", m.Name, scheme, l.Addr().String()))
 		}
@@ -180,13 +193,8 @@ func (c *cluster) URLs() []string {
 func (c *cluster) HTTPMembers() []client.Member {
 	ms := []client.Member{}
 	for _, m := range c.Members {
-		pScheme, cScheme := "http", "http"
-		if m.PeerTLSInfo != nil {
-			pScheme = "https"
-		}
-		if m.ClientTLSInfo != nil {
-			cScheme = "https"
-		}
+		pScheme := schemeFromTLSInfo(m.PeerTLSInfo)
+		cScheme := schemeFromTLSInfo(m.ClientTLSInfo)
 		cm := client.Member{Name: m.Name}
 		for _, ln := range m.PeerListeners {
 			cm.PeerURLs = append(cm.PeerURLs, pScheme+"://"+ln.Addr().String())
@@ -219,10 +227,7 @@ func (c *cluster) mustNewMember(t *testing.T) *member {
 func (c *cluster) addMember(t *testing.T) {
 	m := c.mustNewMember(t)
 
-	scheme := "http"
-	if c.cfg.PeerTLS != nil {
-		scheme = "https"
-	}
+	scheme := schemeFromTLSInfo(c.cfg.PeerTLS)
 
 	// send add request to the cluster
 	var err error
@@ -384,26 +389,13 @@ func isMembersEqual(membs []client.Member, wmembs []client.Member) bool {
 }
 
 func newLocalListener(t *testing.T) net.Listener {
-	port := atomic.AddInt64(&nextListenPort, 1)
-	l, err := net.Listen("tcp", "127.0.0.1:"+strconv.FormatInt(port, 10))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return l
+	c := atomic.AddInt64(&localListenCount, 1)
+	addr := fmt.Sprintf("127.0.0.1:%d.%d.sock", c+basePort, os.Getpid())
+	return newListenerWithAddr(t, addr)
 }
 
 func newListenerWithAddr(t *testing.T, addr string) net.Listener {
-	var err error
-	var l net.Listener
-	// TODO: we want to reuse a previous closed port immediately.
-	// a better way is to set SO_REUSExx instead of doing retry.
-	for i := 0; i < 5; i++ {
-		l, err = net.Listen("tcp", addr)
-		if err == nil {
-			break
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
+	l, err := transport.NewUnixListener(addr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,6 +417,7 @@ type member struct {
 
 	grpcServer *grpc.Server
 	grpcAddr   string
+	grpcBridge *bridge
 }
 
 func (m *member) GRPCAddr() string { return m.grpcAddr }
@@ -442,13 +435,8 @@ func mustNewMember(t *testing.T, mcfg memberConfig) *member {
 	var err error
 	m := &member{}
 
-	peerScheme, clientScheme := "http", "http"
-	if mcfg.peerTLS != nil {
-		peerScheme = "https"
-	}
-	if mcfg.clientTLS != nil {
-		clientScheme = "https"
-	}
+	peerScheme := schemeFromTLSInfo(mcfg.peerTLS)
+	clientScheme := schemeFromTLSInfo(mcfg.clientTLS)
 
 	pln := newLocalListener(t)
 	m.PeerListeners = []net.Listener{pln}
@@ -493,17 +481,21 @@ func mustNewMember(t *testing.T, mcfg memberConfig) *member {
 func (m *member) listenGRPC() error {
 	// prefix with localhost so cert has right domain
 	m.grpcAddr = "localhost:" + m.Name + ".sock"
-	if err := os.RemoveAll(m.grpcAddr); err != nil {
-		return err
-	}
-	l, err := net.Listen("unix", m.grpcAddr)
+	l, err := transport.NewUnixListener(m.grpcAddr)
 	if err != nil {
 		return fmt.Errorf("listen failed on grpc socket %s (%v)", m.grpcAddr, err)
 	}
-	m.grpcAddr = "unix://" + m.grpcAddr
+	m.grpcBridge, err = newBridge(m.grpcAddr)
+	if err != nil {
+		l.Close()
+		return err
+	}
+	m.grpcAddr = m.grpcBridge.URL()
 	m.grpcListener = l
 	return nil
 }
+
+func (m *member) DropConnections() { m.grpcBridge.Reset() }
 
 // NewClientV3 creates a new grpc client connection to the member
 func NewClientV3(m *member) (*clientv3.Client, error) {
@@ -653,6 +645,10 @@ func (m *member) Resume() {
 
 // Close stops the member's etcdserver and closes its connections
 func (m *member) Close() {
+	if m.grpcBridge != nil {
+		m.grpcBridge.Close()
+		m.grpcBridge = nil
+	}
 	if m.grpcServer != nil {
 		m.grpcServer.Stop()
 		m.grpcServer = nil
@@ -744,6 +740,8 @@ func (p SortableMemberSliceByPeerURLs) Swap(i, j int) { p[i], p[j] = p[j], p[i] 
 
 type ClusterV3 struct {
 	*cluster
+
+	mu      sync.Mutex
 	clients []*clientv3.Client
 }
 
@@ -751,7 +749,9 @@ type ClusterV3 struct {
 // for each cluster member.
 func NewClusterV3(t *testing.T, cfg *ClusterConfig) *ClusterV3 {
 	cfg.UseGRPC = true
-	clus := &ClusterV3{cluster: NewClusterByConfig(t, cfg)}
+	clus := &ClusterV3{
+		cluster: NewClusterByConfig(t, cfg),
+	}
 	for _, m := range clus.Members {
 		client, err := NewClientV3(m)
 		if err != nil {
@@ -761,18 +761,26 @@ func NewClusterV3(t *testing.T, cfg *ClusterConfig) *ClusterV3 {
 	}
 	clus.Launch(t)
 
-	// manually enable v3 capability since we know we are starting a v3 cluster here.
-	api.EnableCapability(api.V3rpcCapability)
-
 	return clus
 }
 
+func (c *ClusterV3) TakeClient(idx int) {
+	c.mu.Lock()
+	c.clients[idx] = nil
+	c.mu.Unlock()
+}
+
 func (c *ClusterV3) Terminate(t *testing.T) {
+	c.mu.Lock()
 	for _, client := range c.clients {
+		if client == nil {
+			continue
+		}
 		if err := client.Close(); err != nil {
 			t.Error(err)
 		}
 	}
+	c.mu.Unlock()
 	c.cluster.Terminate(t)
 }
 

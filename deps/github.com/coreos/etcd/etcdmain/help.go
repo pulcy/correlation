@@ -75,14 +75,18 @@ clustering flags:
 		discovery URL used to bootstrap the cluster.
 	--discovery-fallback 'proxy'
 		expected behavior ('exit' or 'proxy') when discovery services fails.
+		"proxy" supports v2 API only.
 	--discovery-proxy ''
 		HTTP proxy to use for traffic to discovery service.
 	--discovery-srv ''
 		dns srv domain used to bootstrap the cluster.
 	--strict-reconfig-check
 		reject reconfiguration requests that would cause quorum loss.
+	--auto-compaction-retention '0'
+		auto compaction retention in hour. 0 means disable auto compaction.
 
 proxy flags:
+	"proxy" supports v2 API only.
 
 	--proxy 'off'
 		proxy mode setting ('off', 'readonly' or 'on').
@@ -139,13 +143,7 @@ given by the consensus protocol.
 
 	--force-new-cluster 'false'
 		force to create a new one-member cluster.
-
-
-experimental flags:
-
-	--experimental-auto-compaction-retention '0'
-		auto compaction retention in hour. 0 means disable auto compaction.
-
+	
 profiling flags:
 	--enable-pprof 'false'
 		Enable runtime profiling data via HTTP server. Address is at client URL + "/debug/pprof"

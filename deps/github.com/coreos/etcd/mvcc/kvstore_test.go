@@ -206,7 +206,7 @@ func TestStoreRange(t *testing.T) {
 		b.tx.rangeRespc <- tt.r
 		fi.indexRangeRespc <- tt.idxr
 
-		kvs, rev, err := s.rangeKeys([]byte("foo"), []byte("goo"), 1, 0)
+		kvs, _, rev, err := s.rangeKeys([]byte("foo"), []byte("goo"), 1, 0, false)
 		if err != nil {
 			t.Errorf("#%d: err = %v, want nil", i, err)
 		}
@@ -440,7 +440,7 @@ func TestRestoreContinueUnfinishedCompaction(t *testing.T) {
 	// wait for scheduled compaction to be finished
 	time.Sleep(100 * time.Millisecond)
 
-	if _, _, err := s1.Range([]byte("foo"), nil, 0, 1); err != ErrCompacted {
+	if _, err := s1.Range([]byte("foo"), nil, RangeOptions{Rev: 1}); err != ErrCompacted {
 		t.Errorf("range on compacted rev error = %v, want %v", err, ErrCompacted)
 	}
 	// check the key in backend is deleted
@@ -593,13 +593,13 @@ type fakeBackend struct {
 	tx *fakeBatchTx
 }
 
-func (b *fakeBackend) BatchTx() backend.BatchTx   { return b.tx }
-func (b *fakeBackend) Hash() (uint32, error)      { return 0, nil }
-func (b *fakeBackend) Size() int64                { return 0 }
-func (b *fakeBackend) Snapshot() backend.Snapshot { return nil }
-func (b *fakeBackend) ForceCommit()               {}
-func (b *fakeBackend) Defrag() error              { return nil }
-func (b *fakeBackend) Close() error               { return nil }
+func (b *fakeBackend) BatchTx() backend.BatchTx                                    { return b.tx }
+func (b *fakeBackend) Hash(ignores map[backend.IgnoreKey]struct{}) (uint32, error) { return 0, nil }
+func (b *fakeBackend) Size() int64                                                 { return 0 }
+func (b *fakeBackend) Snapshot() backend.Snapshot                                  { return nil }
+func (b *fakeBackend) ForceCommit()                                                {}
+func (b *fakeBackend) Defrag() error                                               { return nil }
+func (b *fakeBackend) Close() error                                                { return nil }
 
 type indexGetResp struct {
 	rev     revision

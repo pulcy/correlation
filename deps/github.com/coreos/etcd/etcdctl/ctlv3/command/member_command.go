@@ -27,8 +27,8 @@ var memberPeerURLs string
 // NewMemberCommand returns the cobra command for "member".
 func NewMemberCommand() *cobra.Command {
 	mc := &cobra.Command{
-		Use:   "member",
-		Short: "member is used to manage membership in an etcd cluster.",
+		Use:   "member <subcommand>",
+		Short: "Membership related commands",
 	}
 
 	mc.AddCommand(NewMemberAddCommand())
@@ -43,12 +43,12 @@ func NewMemberCommand() *cobra.Command {
 func NewMemberAddCommand() *cobra.Command {
 	cc := &cobra.Command{
 		Use:   "add <memberName>",
-		Short: "add is used to add a member into the cluster",
+		Short: "Adds a member into the cluster",
 
 		Run: memberAddCommandFunc,
 	}
 
-	cc.Flags().StringVar(&memberPeerURLs, "peerURLs", "", "comma separated peer URLs for the new member.")
+	cc.Flags().StringVar(&memberPeerURLs, "peer-urls", "", "comma separated peer URLs for the new member.")
 
 	return cc
 }
@@ -57,7 +57,7 @@ func NewMemberAddCommand() *cobra.Command {
 func NewMemberRemoveCommand() *cobra.Command {
 	cc := &cobra.Command{
 		Use:   "remove <memberID>",
-		Short: "remove is used to remove a member from the cluster",
+		Short: "Removes a member from the cluster",
 
 		Run: memberRemoveCommandFunc,
 	}
@@ -69,12 +69,12 @@ func NewMemberRemoveCommand() *cobra.Command {
 func NewMemberUpdateCommand() *cobra.Command {
 	cc := &cobra.Command{
 		Use:   "update <memberID>",
-		Short: "update is used to update a member in the cluster",
+		Short: "Updates a member in the cluster",
 
 		Run: memberUpdateCommandFunc,
 	}
 
-	cc.Flags().StringVar(&memberPeerURLs, "peerURLs", "", "comma separated peer URLs for the updated member.")
+	cc.Flags().StringVar(&memberPeerURLs, "peer-urls", "", "comma separated peer URLs for the updated member.")
 
 	return cc
 }
@@ -83,7 +83,7 @@ func NewMemberUpdateCommand() *cobra.Command {
 func NewMemberListCommand() *cobra.Command {
 	cc := &cobra.Command{
 		Use:   "list",
-		Short: "list is used to list all members in the cluster",
+		Short: "Lists all members in the cluster",
 		Long: `When --write-out is set to simple, this command prints out comma-separated member lists for each endpoint.
 The items in the lists are ID, Status, Name, Peer Addrs, Client Addrs.
 `,

@@ -85,6 +85,13 @@ func (clnt *client) Create(containerID string, spec Spec, options ...CreateOptio
 		configuration.HvRuntime = &hcsshim.HvRuntime{
 			ImagePath: spec.Windows.HvRuntime.ImagePath,
 		}
+
+		// Images with build verison < 14350 don't support running with clone, but
+		// Windows cannot automatically detect this. Explicitly block cloning in this
+		// case.
+		if build := buildFromVersion(spec.Platform.OSVersion); build > 0 && build < 14350 {
+			configuration.HvRuntime.SkipTemplate = true
+		}
 	}
 
 	if configuration.HvPartition {
@@ -153,7 +160,7 @@ func (clnt *client) Create(containerID string, spec Spec, options ...CreateOptio
 	}
 
 	// Call start, and if it fails, delete the container from our
-	// internal structure, and also keep HCS in sync by deleting the
+	// internal structure, start will keep HCS in sync by deleting the
 	// container there.
 	logrus.Debugf("Create() id=%s, Calling start()", containerID)
 	if err := container.start(); err != nil {
@@ -295,13 +302,31 @@ func (clnt *client) Signal(containerID string, sig int) error {
 	} else {
 		// Terminate Process
 		if err := cont.hcsProcess.Kill(); err != nil {
+			// ignore errors
 			logrus.Warnf("Failed to terminate pid %d in %s: %q", cont.systemPid, containerID, err)
-			// Ignore errors
-			err = nil
 		}
 	}
 
 	return nil
+}
+
+// While Linux has support for the full range of signals, signals aren't really implemented on Windows.
+// We try to terminate the specified process whatever signal is requested.
+func (clnt *client) SignalProcess(containerID string, processFriendlyName string, sig int) error {
+	clnt.lock(containerID)
+	defer clnt.unlock(containerID)
+	cont, err := clnt.getContainer(containerID)
+	if err != nil {
+		return err
+	}
+
+	for _, p := range cont.processes {
+		if p.friendlyName == processFriendlyName {
+			return hcsshim.TerminateProcessInComputeSystem(containerID, p.systemPid)
+		}
+	}
+
+	return fmt.Errorf("SignalProcess could not find process %s in %s", processFriendlyName, containerID)
 }
 
 // Resize handles a CLI event to resize an interactive docker run or docker exec

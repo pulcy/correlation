@@ -236,6 +236,9 @@ func (s *store) Set(nodePath string, dir bool, value string, expireOpts TTLOptio
 
 	if !expireOpts.Refresh {
 		s.WatcherHub.notify(e)
+	} else {
+		e.SetRefresh()
+		s.WatcherHub.add(e)
 	}
 
 	return e, nil
@@ -295,6 +298,10 @@ func (s *store) CompareAndSwap(nodePath string, prevValue string, prevIndex uint
 		return nil, err
 	}
 
+	if expireOpts.Refresh {
+		value = n.Value
+	}
+
 	// update etcd index
 	s.CurrentIndex++
 
@@ -314,6 +321,9 @@ func (s *store) CompareAndSwap(nodePath string, prevValue string, prevIndex uint
 
 	if !expireOpts.Refresh {
 		s.WatcherHub.notify(e)
+	} else {
+		e.SetRefresh()
+		s.WatcherHub.add(e)
 	}
 
 	return e, nil
@@ -539,6 +549,9 @@ func (s *store) Update(nodePath string, newValue string, expireOpts TTLOptionSet
 
 	if !expireOpts.Refresh {
 		s.WatcherHub.notify(e)
+	} else {
+		e.SetRefresh()
+		s.WatcherHub.add(e)
 	}
 
 	s.CurrentIndex = nextIndex

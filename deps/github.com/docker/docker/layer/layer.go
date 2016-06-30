@@ -14,6 +14,7 @@ import (
 	"io"
 
 	"github.com/Sirupsen/logrus"
+	"github.com/docker/distribution"
 	"github.com/docker/distribution/digest"
 	"github.com/docker/docker/pkg/archive"
 )
@@ -50,7 +51,7 @@ var (
 	// greater than the 125 max.
 	ErrMaxDepthExceeded = errors.New("max depth exceeded")
 
-	// ErrNotSupported is used when the action is not supppoted
+	// ErrNotSupported is used when the action is not supported
 	// on the current platform
 	ErrNotSupported = errors.New("not support on this platform")
 )
@@ -181,6 +182,12 @@ type Store interface {
 	DriverName() string
 }
 
+// DescribableStore represents a layer store capable of storing
+// descriptors for layers.
+type DescribableStore interface {
+	RegisterWithDescriptor(io.Reader, ChainID, distribution.Descriptor) (Layer, error)
+}
+
 // MetadataTransaction represents functions for setting layer metadata
 // with a single transaction.
 type MetadataTransaction interface {
@@ -188,6 +195,7 @@ type MetadataTransaction interface {
 	SetParent(parent ChainID) error
 	SetDiffID(DiffID) error
 	SetCacheID(string) error
+	SetDescriptor(distribution.Descriptor) error
 	TarSplitWriter(compressInput bool) (io.WriteCloser, error)
 
 	Commit(ChainID) error
@@ -207,6 +215,7 @@ type MetadataStore interface {
 	GetParent(ChainID) (ChainID, error)
 	GetDiffID(ChainID) (DiffID, error)
 	GetCacheID(ChainID) (string, error)
+	GetDescriptor(ChainID) (distribution.Descriptor, error)
 	TarSplitReader(ChainID) (io.ReadCloser, error)
 
 	SetMountID(string, string) error

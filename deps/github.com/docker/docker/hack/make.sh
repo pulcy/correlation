@@ -26,6 +26,7 @@ set -o pipefail
 export DOCKER_PKG='github.com/docker/docker'
 export SCRIPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export MAKEDIR="$SCRIPTDIR/make"
+export PKG_CONFIG=${PKG_CONFIG:-pkg-config}
 
 : ${TEST_REPEAT:=0}
 
@@ -117,7 +118,7 @@ if [ "$AUTO_GOPATH" ]; then
 	if [ "$(go env GOOS)" = 'solaris' ]; then
 		# sys/unix is installed outside the standard library on solaris
 		# TODO need to allow for version change, need to get version from go
-		export GOPATH="${GOPATH}:/usr/lib/gocode/1.5"
+		export GOPATH="${GOPATH}:/usr/lib/gocode/1.6.2"
 	fi
 fi
 
@@ -134,9 +135,9 @@ if [ "$DOCKER_EXPERIMENTAL" ]; then
 fi
 
 DOCKER_BUILDTAGS+=" daemon"
-if pkg-config 'libsystemd >= 209' 2> /dev/null ; then
+if ${PKG_CONFIG} 'libsystemd >= 209' 2> /dev/null ; then
 	DOCKER_BUILDTAGS+=" journald"
-elif pkg-config 'libsystemd-journal' 2> /dev/null ; then
+elif ${PKG_CONFIG} 'libsystemd-journal' 2> /dev/null ; then
 	DOCKER_BUILDTAGS+=" journald journald_compat"
 fi
 
@@ -332,6 +333,19 @@ copy_containerd() {
 		fi
 	fi
 }
+
+install_binary() {
+	file="$1"
+	target="${DOCKER_MAKE_INSTALL_PREFIX:=/usr/local}/bin/"
+	if [ "$(go env GOOS)" == "linux" ]; then
+		echo "Installing $(basename $file) to ${target}"
+		cp -L "$file" "$target"
+	else
+		echo "Install is only supported on linux"
+		return 1
+	fi
+}
+
 
 main() {
 	# We want this to fail if the bundles already exist and cannot be removed.

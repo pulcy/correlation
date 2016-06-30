@@ -94,9 +94,12 @@ type serverWatchStream struct {
 
 	// closec indicates the stream is closed.
 	closec chan struct{}
+
+	// wg waits for the send loop to complete
+	wg sync.WaitGroup
 }
 
-func (ws *watchServer) Watch(stream pb.Watch_WatchServer) error {
+func (ws *watchServer) Watch(stream pb.Watch_WatchServer) (err error) {
 	sws := serverWatchStream{
 		clusterID:   ws.clusterID,
 		memberID:    ws.memberID,
@@ -109,26 +112,34 @@ func (ws *watchServer) Watch(stream pb.Watch_WatchServer) error {
 		closec:     make(chan struct{}),
 	}
 
-	go sws.sendLoop()
-	errc := make(chan error, 1)
+	sws.wg.Add(1)
 	go func() {
-		errc <- sws.recvLoop()
-		sws.close()
+		sws.sendLoop()
+		sws.wg.Done()
 	}()
+
+	errc := make(chan error, 1)
+	// Ideally recvLoop would also use sws.wg to signal its completion
+	// but when stream.Context().Done() is closed, the stream's recv
+	// may continue to block since it uses a different context, leading to
+	// deadlock when calling sws.close().
+	go func() { errc <- sws.recvLoop() }()
+
 	select {
-	case err := <-errc:
-		return err
+	case err = <-errc:
 	case <-stream.Context().Done():
-		err := stream.Context().Err()
+		err = stream.Context().Err()
 		// the only server-side cancellation is noleader for now.
 		if err == context.Canceled {
-			return rpctypes.ErrGRPCNoLeader
+			err = rpctypes.ErrGRPCNoLeader
 		}
-		return err
 	}
+	sws.close()
+	return err
 }
 
 func (sws *serverWatchStream) recvLoop() error {
+	defer close(sws.ctrlStream)
 	for {
 		req, err := sws.gRPCStream.Recv()
 		if err == io.EOF {
@@ -153,20 +164,36 @@ func (sws *serverWatchStream) recvLoop() error {
 				// support  >= key queries
 				creq.RangeEnd = []byte{}
 			}
+			filters := make([]mvcc.FilterFunc, 0, len(creq.Filters))
+			for _, ft := range creq.Filters {
+				switch ft {
+				case pb.WatchCreateRequest_NOPUT:
+					filters = append(filters, filterNoPut)
+				case pb.WatchCreateRequest_NODELETE:
+					filters = append(filters, filterNoDelete)
+				default:
+				}
+			}
+
 			wsrev := sws.watchStream.Rev()
 			rev := creq.StartRevision
 			if rev == 0 {
 				rev = wsrev + 1
 			}
-			id := sws.watchStream.Watch(creq.Key, creq.RangeEnd, rev)
+			id := sws.watchStream.Watch(creq.Key, creq.RangeEnd, rev, filters...)
 			if id != -1 && creq.ProgressNotify {
 				sws.progress[id] = true
 			}
-			sws.ctrlStream <- &pb.WatchResponse{
+			wr := &pb.WatchResponse{
 				Header:   sws.newResponseHeader(wsrev),
 				WatchId:  int64(id),
 				Created:  true,
 				Canceled: id == -1,
+			}
+			select {
+			case sws.ctrlStream <- wr:
+			case <-sws.closec:
+				return nil
 			}
 		case *pb.WatchRequest_CancelRequest:
 			if uv.CancelRequest != nil {
@@ -198,7 +225,19 @@ func (sws *serverWatchStream) sendLoop() {
 
 	interval := GetProgressReportInterval()
 	progressTicker := time.NewTicker(interval)
-	defer progressTicker.Stop()
+
+	defer func() {
+		progressTicker.Stop()
+		// drain the chan to clean up pending events
+		for ws := range sws.watchStream.Chan() {
+			mvcc.ReportEventReceived(len(ws.Events))
+		}
+		for _, wrs := range pending {
+			for _, ws := range wrs {
+				mvcc.ReportEventReceived(len(ws.Events))
+			}
+		}
+	}()
 
 	for {
 		select {
@@ -230,7 +269,7 @@ func (sws *serverWatchStream) sendLoop() {
 				continue
 			}
 
-			mvcc.ReportEventReceived()
+			mvcc.ReportEventReceived(len(evs))
 			if err := sws.gRPCStream.Send(wr); err != nil {
 				return
 			}
@@ -260,7 +299,7 @@ func (sws *serverWatchStream) sendLoop() {
 				// flush buffered events
 				ids[wid] = struct{}{}
 				for _, v := range pending[wid] {
-					mvcc.ReportEventReceived()
+					mvcc.ReportEventReceived(len(v.Events))
 					if err := sws.gRPCStream.Send(v); err != nil {
 						return
 					}
@@ -275,15 +314,7 @@ func (sws *serverWatchStream) sendLoop() {
 				sws.progress[id] = true
 			}
 		case <-sws.closec:
-			// drain the chan to clean up pending events
-			for range sws.watchStream.Chan() {
-				mvcc.ReportEventReceived()
-			}
-			for _, wrs := range pending {
-				for range wrs {
-					mvcc.ReportEventReceived()
-				}
-			}
+			return
 		}
 	}
 }
@@ -291,7 +322,7 @@ func (sws *serverWatchStream) sendLoop() {
 func (sws *serverWatchStream) close() {
 	sws.watchStream.Close()
 	close(sws.closec)
-	close(sws.ctrlStream)
+	sws.wg.Wait()
 }
 
 func (sws *serverWatchStream) newResponseHeader(rev int64) *pb.ResponseHeader {
@@ -301,4 +332,12 @@ func (sws *serverWatchStream) newResponseHeader(rev int64) *pb.ResponseHeader {
 		Revision:  rev,
 		RaftTerm:  sws.raftTimer.Term(),
 	}
+}
+
+func filterNoDelete(e mvccpb.Event) bool {
+	return e.Type == mvccpb.DELETE
+}
+
+func filterNoPut(e mvccpb.Event) bool {
+	return e.Type == mvccpb.PUT
 }

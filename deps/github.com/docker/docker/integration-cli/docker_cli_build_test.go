@@ -2988,32 +2988,6 @@ func (s *DockerSuite) TestBuildEntrypointRunCleanup(c *check.C) {
 	}
 }
 
-func (s *DockerSuite) TestBuildForbiddenContextPath(c *check.C) {
-	name := "testbuildforbidpath"
-	ctx, err := fakeContext(`FROM `+minimalBaseImage()+`
-        ADD ../../ test/
-        `,
-		map[string]string{
-			"test.txt":  "test1",
-			"other.txt": "other",
-		})
-	if err != nil {
-		c.Fatal(err)
-	}
-	defer ctx.Close()
-
-	expected := "Forbidden path outside the build context: ../../ "
-
-	if daemonPlatform == "windows" {
-		expected = "Forbidden path outside the build context: ..\\..\\ "
-	}
-
-	if _, err := buildImageFromContext(name, ctx, true); err == nil || !strings.Contains(err.Error(), expected) {
-		c.Fatalf("Wrong error: (should contain \"%s\") got:\n%v", expected, err)
-	}
-
-}
-
 func (s *DockerSuite) TestBuildAddFileNotFound(c *check.C) {
 	name := "testbuildaddnotfound"
 	expected := "foo: no such file or directory"
@@ -4685,16 +4659,17 @@ func (s *DockerSuite) TestBuildNotVerboseFailure(c *check.C) {
 
 func (s *DockerSuite) TestBuildNotVerboseFailureRemote(c *check.C) {
 	// This test ensures that when given a wrong URL, stderr in quiet mode and
-	// stdout and stderr in verbose mode are identical.
-	URL := "http://bla.bla.com"
+	// stderr in verbose mode are identical.
+	// TODO(vdemeester) with cobra, stdout has a carriage return too much so this test should not check stdout
+	URL := "http://something.invalid"
 	Name := "quiet_build_wrong_remote"
 	_, _, qstderr, qerr := buildImageWithStdoutStderr(Name, "", false, "-q", "--force-rm", "--rm", URL)
-	_, vstdout, vstderr, verr := buildImageWithStdoutStderr(Name, "", false, "--force-rm", "--rm", URL)
+	_, _, vstderr, verr := buildImageWithStdoutStderr(Name, "", false, "--force-rm", "--rm", URL)
 	if qerr == nil || verr == nil {
 		c.Fatal(fmt.Errorf("Test [%s] expected to fail but didn't", Name))
 	}
-	if qstderr != vstdout+vstderr {
-		c.Fatal(fmt.Errorf("Test[%s] expected that quiet stderr and verbose stdout are equal; quiet [%v], verbose [%v]", Name, qstderr, vstdout))
+	if qstderr != vstderr {
+		c.Fatal(fmt.Errorf("Test[%s] expected that quiet stderr and verbose stdout are equal; quiet [%v], verbose [%v]", Name, qstderr, vstderr))
 	}
 }
 
@@ -6739,4 +6714,241 @@ func (s *DockerSuite) TestBuildLabelsOverride(c *check.C) {
 		c.Fatalf("Labels %s, expected %s", res, expected)
 	}
 
+}
+
+// Test case for #22855
+func (s *DockerSuite) TestBuildDeleteCommittedFile(c *check.C) {
+	name := "test-delete-committed-file"
+
+	_, err := buildImage(name,
+		`FROM busybox
+		RUN echo test > file
+		RUN test -e file
+		RUN rm file
+		RUN sh -c "! test -e file"`, false)
+	if err != nil {
+		c.Fatal(err)
+	}
+}
+
+// #20083
+func (s *DockerSuite) TestBuildDockerignoreComment(c *check.C) {
+	// TODO Windows: Figure out why this test is flakey on TP5. If you add
+	// something like RUN sleep 5, or even RUN ls /tmp after the ADD line,
+	// it is more reliable, but that's not a good fix.
+	testRequires(c, DaemonIsLinux)
+
+	name := "testbuilddockerignorecleanpaths"
+	dockerfile := `
+        FROM busybox
+        ADD . /tmp/
+        RUN sh -c "(ls -la /tmp/#1)"
+        RUN sh -c "(! ls -la /tmp/#2)"
+        RUN sh -c "(! ls /tmp/foo) && (! ls /tmp/foo2) && (ls /tmp/dir1/foo)"`
+	ctx, err := fakeContext(dockerfile, map[string]string{
+		"foo":      "foo",
+		"foo2":     "foo2",
+		"dir1/foo": "foo in dir1",
+		"#1":       "# file 1",
+		"#2":       "# file 2",
+		".dockerignore": `# Visual C++ cache files
+# because we have git ;-)
+# The above comment is from #20083
+foo
+#dir1/foo
+foo2
+# The following is considered as comment as # is at the beginning
+#1
+# The following is not considered as comment as # is not at the beginning
+  #2
+`,
+	})
+	if err != nil {
+		c.Fatal(err)
+	}
+	defer ctx.Close()
+	if _, err := buildImageFromContext(name, ctx, true); err != nil {
+		c.Fatal(err)
+	}
+}
+
+// Test case for #23221
+func (s *DockerSuite) TestBuildWithUTF8BOM(c *check.C) {
+	name := "test-with-utf8-bom"
+	dockerfile := []byte(`FROM busybox`)
+	bomDockerfile := append([]byte{0xEF, 0xBB, 0xBF}, dockerfile...)
+	ctx, err := fakeContextFromNewTempDir()
+	c.Assert(err, check.IsNil)
+	defer ctx.Close()
+	err = ctx.addFile("Dockerfile", bomDockerfile)
+	c.Assert(err, check.IsNil)
+	_, err = buildImageFromContext(name, ctx, true)
+	c.Assert(err, check.IsNil)
+}
+
+// Test case for UTF-8 BOM in .dockerignore, related to #23221
+func (s *DockerSuite) TestBuildWithUTF8BOMDockerignore(c *check.C) {
+	name := "test-with-utf8-bom-dockerignore"
+	dockerfile := `
+        FROM busybox
+		ADD . /tmp/
+		RUN ls -la /tmp
+		RUN sh -c "! ls /tmp/Dockerfile"
+		RUN ls /tmp/.dockerignore`
+	dockerignore := []byte("./Dockerfile\n")
+	bomDockerignore := append([]byte{0xEF, 0xBB, 0xBF}, dockerignore...)
+	ctx, err := fakeContext(dockerfile, map[string]string{
+		"Dockerfile": dockerfile,
+	})
+	c.Assert(err, check.IsNil)
+	defer ctx.Close()
+	err = ctx.addFile(".dockerignore", bomDockerignore)
+	c.Assert(err, check.IsNil)
+	_, err = buildImageFromContext(name, ctx, true)
+	if err != nil {
+		c.Fatal(err)
+	}
+}
+
+// #22489 Shell test to confirm config gets updated correctly
+func (s *DockerSuite) TestBuildShellUpdatesConfig(c *check.C) {
+	name := "testbuildshellupdatesconfig"
+
+	expected := `["foo","-bar","#(nop) ","SHELL [foo -bar]"]`
+	_, err := buildImage(name,
+		`FROM `+minimalBaseImage()+`
+        SHELL ["foo", "-bar"]`,
+		true)
+	if err != nil {
+		c.Fatal(err)
+	}
+	res := inspectFieldJSON(c, name, "ContainerConfig.Cmd")
+	if res != expected {
+		c.Fatalf("%s, expected %s", res, expected)
+	}
+	res = inspectFieldJSON(c, name, "ContainerConfig.Shell")
+	if res != `["foo","-bar"]` {
+		c.Fatalf(`%s, expected ["foo","-bar"]`, res)
+	}
+}
+
+// #22489 Changing the shell multiple times and CMD after.
+func (s *DockerSuite) TestBuildShellMultiple(c *check.C) {
+	name := "testbuildshellmultiple"
+
+	_, out, _, err := buildImageWithStdoutStderr(name,
+		`FROM busybox
+		RUN echo defaultshell
+		SHELL ["echo"]
+		RUN echoshell
+		SHELL ["ls"]
+		RUN -l
+		CMD -l`,
+		true)
+	if err != nil {
+		c.Fatal(err)
+	}
+
+	// Must contain 'defaultshell' twice
+	if len(strings.Split(out, "defaultshell")) != 3 {
+		c.Fatalf("defaultshell should have appeared twice in %s", out)
+	}
+
+	// Must contain 'echoshell' twice
+	if len(strings.Split(out, "echoshell")) != 3 {
+		c.Fatalf("echoshell should have appeared twice in %s", out)
+	}
+
+	// Must contain "total " (part of ls -l)
+	if !strings.Contains(out, "total ") {
+		c.Fatalf("%s should have contained 'total '", out)
+	}
+
+	// A container started from the image uses the shell-form CMD.
+	// Last shell is ls. CMD is -l. So should contain 'total '.
+	outrun, _ := dockerCmd(c, "run", "--rm", name)
+	if !strings.Contains(outrun, "total ") {
+		c.Fatalf("Expected started container to run ls -l. %s", outrun)
+	}
+}
+
+// #22489. Changed SHELL with ENTRYPOINT
+func (s *DockerSuite) TestBuildShellEntrypoint(c *check.C) {
+	name := "testbuildshellentrypoint"
+
+	_, err := buildImage(name,
+		`FROM busybox
+		SHELL ["ls"]
+		ENTRYPOINT -l`,
+		true)
+	if err != nil {
+		c.Fatal(err)
+	}
+
+	// A container started from the image uses the shell-form ENTRYPOINT.
+	// Shell is ls. ENTRYPOINT is -l. So should contain 'total '.
+	outrun, _ := dockerCmd(c, "run", "--rm", name)
+	if !strings.Contains(outrun, "total ") {
+		c.Fatalf("Expected started container to run ls -l. %s", outrun)
+	}
+}
+
+// #22489 Shell test to confirm shell is inherited in a subsequent build
+func (s *DockerSuite) TestBuildShellInherited(c *check.C) {
+	name1 := "testbuildshellinherited1"
+	_, err := buildImage(name1,
+		`FROM busybox
+        SHELL ["ls"]`,
+		true)
+	if err != nil {
+		c.Fatal(err)
+	}
+
+	name2 := "testbuildshellinherited2"
+	_, out, _, err := buildImageWithStdoutStderr(name2,
+		`FROM `+name1+`
+        RUN -l`,
+		true)
+	if err != nil {
+		c.Fatal(err)
+	}
+
+	// ls -l has "total " followed by some number in it, ls without -l does not.
+	if !strings.Contains(out, "total ") {
+		c.Fatalf("Should have seen total in 'ls -l'.\n%s", out)
+	}
+}
+
+// #22489 Shell test to confirm non-JSON doesn't work
+func (s *DockerSuite) TestBuildShellNotJSON(c *check.C) {
+	name := "testbuildshellnotjson"
+
+	_, err := buildImage(name,
+		`FROM `+minimalBaseImage()+`
+        sHeLl exec -form`, // Casing explicit to ensure error is upper-cased.
+		true)
+	if err == nil {
+		c.Fatal("Image build should have failed")
+	}
+	if !strings.Contains(err.Error(), "SHELL requires the arguments to be in JSON form") {
+		c.Fatal("Error didn't indicate that arguments must be in JSON form")
+	}
+}
+
+// #22489 Windows shell test to confirm native is powershell if executing a PS command
+// This would error if the default shell were still cmd.
+func (s *DockerSuite) TestBuildShellWindowsPowershell(c *check.C) {
+	testRequires(c, DaemonIsWindows)
+	name := "testbuildshellpowershell"
+	_, out, err := buildImageWithOut(name,
+		`FROM `+minimalBaseImage()+`
+        SHELL ["powershell", "-command"]
+		RUN Write-Host John`,
+		true)
+	if err != nil {
+		c.Fatal(err)
+	}
+	if !strings.Contains(out, "\nJohn\n") {
+		c.Fatalf("Line with 'John' not found in output %q", out)
+	}
 }

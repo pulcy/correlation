@@ -26,7 +26,7 @@ function teardown() {
   [ ! -e config.json ]
 
   # test generation of spec does not return an error
-  run "$RUNC" spec
+  runc spec
   [ "$status" -eq 0 ]
 
   # test generation of spec created our config.json (spec)
@@ -39,8 +39,8 @@ function teardown() {
   # change the default args parameter from sh to hello
   sed -i 's;"sh";"/hello";' config.json
 
-  # ensure the generated spec works by starting hello-world
-  run "$RUNC" start test_hello
+  # ensure the generated spec works by running hello-world
+  runc run test_hello
   [ "$status" -eq 0 ]
 }
 
@@ -51,7 +51,7 @@ function teardown() {
   [ ! -e "$HELLO_BUNDLE"/config.json ]
 
   # test generation of spec does not return an error
-  run "$RUNC" spec --bundle "$HELLO_BUNDLE"
+  runc spec --bundle "$HELLO_BUNDLE"
   [ "$status" -eq 0 ]
 
   # test generation of spec created our config.json (spec)
@@ -60,18 +60,21 @@ function teardown() {
   # change the default args parameter from sh to hello
   sed -i 's;"sh";"/hello";' "$HELLO_BUNDLE"/config.json
 
-  # ensure the generated spec works by starting hello-world
-  run "$RUNC" start --bundle "$HELLO_BUNDLE" test_hello
+  # ensure the generated spec works by running hello-world
+  runc run --bundle "$HELLO_BUNDLE" test_hello
   [ "$status" -eq 0 ]
 }
 
 @test "spec validator" {
+  TESTDIR=$(pwd)
   cd "$HELLO_BUNDLE"
-  # note this test runs from the temporary bundle directory not the integration root
-  # note this test is brittle against specs changes that lead runc's spec command
-  # todo get the validate program, gojsonschema, and schema/*s.json from godeps?
 
   run git clone https://github.com/opencontainers/runtime-spec.git src/runtime-spec
+  [ "$status" -eq 0 ]
+
+  SPEC_COMMIT=$(grep runtime-spec ${TESTDIR}/../../Godeps/Godeps.json -A 4 | grep Rev | cut -d":" -f 2 | tr -d ' "')
+  run git -C src/runtime-spec reset --hard "${SPEC_COMMIT}"
+  [ "$status" -eq 0 ]
   [ -e src/runtime-spec/schema/schema.json ]
 
   run bash -c "GOPATH='$GOPATH' go get github.com/xeipuuv/gojsonschema"
@@ -80,7 +83,7 @@ function teardown() {
   GOPATH="$GOPATH" go build src/runtime-spec/schema/validate.go
   [ -e ./validate ]
 
-  run "$RUNC" spec
+  runc spec
   [ -e config.json ]
 
   run ./validate src/runtime-spec/schema/schema.json config.json
