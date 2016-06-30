@@ -129,6 +129,9 @@ func NewService(config ServiceConfig, deps ServiceDependencies) (*Service, error
 
 // Run starts the service and waits for OS signals to terminate it.
 func (s *Service) Run() error {
+	// Set env variables
+	os.Setenv("STNOUPGRADE", "true")
+
 	// Run syncthing
 	go s.runSyncthing()
 
