@@ -291,7 +291,7 @@ func (s *Service) updateSyncthing() error {
 			DeviceID:    devID,
 			Name:        dr.ID,
 			Addresses:   []string{fmt.Sprintf("%s://%s:%d", scheme, dr.IP, dr.Port)},
-			Compression: protocol.CompressAlways,
+			Compression: protocol.CompressMetadata,
 		}
 		cfg.Devices = append(cfg.Devices, dev)
 		fld.Devices = append(fld.Devices, config.FolderDeviceConfiguration{DeviceID: devID})
