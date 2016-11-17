@@ -16,7 +16,6 @@ package backend
 
 import (
 	"fmt"
-	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -48,12 +47,10 @@ type etcdBackend struct {
 	announceAddress   string
 }
 
-func NewEtcdBackend(logger *logging.Logger, uri *url.URL) (Backend, error) {
+func NewEtcdBackend(logger *logging.Logger, endpoints []string, path string) (Backend, error) {
 	cfg := client.Config{
 		Transport: client.DefaultTransport,
-	}
-	if uri.Host != "" {
-		cfg.Endpoints = append(cfg.Endpoints, "http://"+uri.Host)
+		Endpoints: endpoints,
 	}
 	c, err := client.New(cfg)
 	if err != nil {
@@ -63,11 +60,14 @@ func NewEtcdBackend(logger *logging.Logger, uri *url.URL) (Backend, error) {
 	options := &client.WatcherOptions{
 		Recursive: true,
 	}
-	watcher := keysAPI.Watcher(uri.Path, options)
+	watcher := keysAPI.Watcher(path, options)
+
+	go c.AutoSync(context.Background(), time.Minute)
+
 	return &etcdBackend{
 		client:     c,
 		watcher:    watcher,
-		devicesKey: uri.Path,
+		devicesKey: path,
 		Logger:     logger,
 	}, nil
 }

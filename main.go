@@ -56,6 +56,8 @@ type globalOptions struct {
 	serviceLogLevel string
 	watcherLogLevel string
 	etcdAddr        string
+	etcdEndpoints   []string
+	etcdPath        string
 	service.ServiceConfig
 }
 
@@ -75,6 +77,8 @@ func init() {
 	cmdMain.Flags().StringVar(&globalFlags.serviceLogLevel, "service-log-level", "", "Minimum log level (debug|info|warning|error)")
 	cmdMain.Flags().StringVar(&globalFlags.watcherLogLevel, "watcher-log-level", defaultWatcherLogLevel, "Minimum log level for the filesystem watcher (debug|info|warning|error)")
 	cmdMain.Flags().StringVar(&globalFlags.etcdAddr, "etcd-addr", "", "Address of etcd backend")
+	cmdMain.Flags().StringSliceVar(&globalFlags.etcdEndpoints, "etcd-endpoint", nil, "Etcd client endpoints")
+	cmdMain.Flags().StringVar(&globalFlags.etcdPath, "etcd-path", "", "Path into etcd namespace")
 
 	cmdMain.Flags().IntVar(&globalFlags.SyncPort, "sync-port", defaultSyncPort, "Port for syncthing to listen on")
 	cmdMain.Flags().IntVar(&globalFlags.HttpPort, "http-port", defaultHttpPort, "Port for syncthing's GUI & REST to listen on")
@@ -98,12 +102,13 @@ func main() {
 
 func cmdMainRun(cmd *cobra.Command, args []string) {
 	// Parse arguments
-	if globalFlags.etcdAddr == "" {
-		Exitf("Please specify --etcd-addr")
-	}
-	etcdUrl, err := url.Parse(globalFlags.etcdAddr)
-	if err != nil {
-		Exitf("--etcd-addr '%s' is not valid: %#v", globalFlags.etcdAddr, err)
+	if globalFlags.etcdAddr != "" {
+		etcdUrl, err := url.Parse(globalFlags.etcdAddr)
+		if err != nil {
+			Exitf("--etcd-addr '%s' is not valid: %#v", globalFlags.etcdAddr, err)
+		}
+		globalFlags.etcdEndpoints = []string{fmt.Sprintf("%s://%s", etcdUrl.Scheme, etcdUrl.Host)}
+		globalFlags.etcdPath = etcdUrl.Path
 	}
 
 	// Set log levels
@@ -112,7 +117,7 @@ func cmdMainRun(cmd *cobra.Command, args []string) {
 	setLogLevel(globalFlags.watcherLogLevel, globalFlags.logLevel, watcherLogName)
 
 	// Prepare backend
-	backend, err := backend.NewEtcdBackend(logging.MustGetLogger(backendLogName), etcdUrl)
+	backend, err := backend.NewEtcdBackend(logging.MustGetLogger(backendLogName), globalFlags.etcdEndpoints, globalFlags.etcdPath)
 	if err != nil {
 		Exitf("Failed to create backend: %#v", err)
 	}
