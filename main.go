@@ -51,13 +51,15 @@ const (
 )
 
 type globalOptions struct {
-	logLevel        string
-	backendLogLevel string
-	serviceLogLevel string
-	watcherLogLevel string
-	etcdAddr        string
-	etcdEndpoints   []string
-	etcdPath        string
+	logLevel            string
+	backendLogLevel     string
+	serviceLogLevel     string
+	watcherLogLevel     string
+	etcdAddr            string
+	etcdEndpoints       []string
+	etcdPath            string
+	kubernetesNamespace string
+	kubernetesPodName   string
 	service.ServiceConfig
 }
 
@@ -76,9 +78,13 @@ func init() {
 	cmdMain.Flags().StringVar(&globalFlags.backendLogLevel, "backend-log-level", "", "Minimum log level (debug|info|warning|error)")
 	cmdMain.Flags().StringVar(&globalFlags.serviceLogLevel, "service-log-level", "", "Minimum log level (debug|info|warning|error)")
 	cmdMain.Flags().StringVar(&globalFlags.watcherLogLevel, "watcher-log-level", defaultWatcherLogLevel, "Minimum log level for the filesystem watcher (debug|info|warning|error)")
+	// ETCD backend
 	cmdMain.Flags().StringVar(&globalFlags.etcdAddr, "etcd-addr", "", "Address of etcd backend")
 	cmdMain.Flags().StringSliceVar(&globalFlags.etcdEndpoints, "etcd-endpoint", nil, "Etcd client endpoints")
 	cmdMain.Flags().StringVar(&globalFlags.etcdPath, "etcd-path", "", "Path into etcd namespace")
+	// Kubernetes backend
+	cmdMain.Flags().StringVar(&globalFlags.kubernetesNamespace, "kubernetes-namespace", "", "Namespace of current pod in Kubernetes")
+	cmdMain.Flags().StringVar(&globalFlags.kubernetesPodName, "kubernetes-podname", "", "Name of current pod in Kubernetes")
 
 	cmdMain.Flags().IntVar(&globalFlags.SyncPort, "sync-port", defaultSyncPort, "Port for syncthing to listen on")
 	cmdMain.Flags().IntVar(&globalFlags.HttpPort, "http-port", defaultHttpPort, "Port for syncthing's GUI & REST to listen on")
@@ -117,9 +123,20 @@ func cmdMainRun(cmd *cobra.Command, args []string) {
 	setLogLevel(globalFlags.watcherLogLevel, globalFlags.logLevel, watcherLogName)
 
 	// Prepare backend
-	backend, err := backend.NewEtcdBackend(logging.MustGetLogger(backendLogName), globalFlags.etcdEndpoints, globalFlags.etcdPath)
-	if err != nil {
-		Exitf("Failed to create backend: %#v", err)
+	var b backend.Backend
+	var err error
+	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" && os.Getenv("KUBERNETES_SERVICE_PORT") != "" &&
+		globalFlags.kubernetesNamespace != "" && globalFlags.kubernetesPodName != "" {
+		// Looks like we're running in Kubernetes, use the Kubernetes backend
+		b, err = backend.NewKubernetesBackend(logging.MustGetLogger(backendLogName), globalFlags.kubernetesNamespace, globalFlags.kubernetesPodName, globalFlags.etcdPath)
+		if err != nil {
+			Exitf("Failed to create Kubernetes backend: %#v", err)
+		}
+	} else {
+		b, err = backend.NewEtcdBackend(logging.MustGetLogger(backendLogName), globalFlags.etcdEndpoints, globalFlags.etcdPath)
+		if err != nil {
+			Exitf("Failed to create ETCD backend: %#v", err)
+		}
 	}
 
 	// Update service config (if needed)
@@ -133,7 +150,7 @@ func cmdMainRun(cmd *cobra.Command, args []string) {
 	service, err := service.NewService(cfg, service.ServiceDependencies{
 		Logger:        serviceLogger,
 		WatcherLogger: logging.MustGetLogger(watcherLogName),
-		Backend:       backend,
+		Backend:       b,
 	})
 	if err != nil {
 		Exitf("Failed to create service: %#v", err)
