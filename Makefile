@@ -63,6 +63,7 @@ update-vendor:
 		github.com/op/go-logging \
 		github.com/spf13/cobra \
 		github.com/spf13/pflag \
+		github.com/YakLabs/k8s-client \
 		github.com/zillode/notify
 
 docker: $(BIN) $(SYNCTHING)
