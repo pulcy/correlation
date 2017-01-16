@@ -25,6 +25,7 @@ import (
 	"github.com/op/go-logging"
 	"github.com/spf13/cobra"
 
+	pkg "github.com/pulcy/correlation/pkg/kubernetes"
 	"github.com/pulcy/correlation/service"
 	"github.com/pulcy/correlation/service/backend"
 )
@@ -51,15 +52,14 @@ const (
 )
 
 type globalOptions struct {
-	logLevel            string
-	backendLogLevel     string
-	serviceLogLevel     string
-	watcherLogLevel     string
-	etcdAddr            string
-	etcdEndpoints       []string
-	etcdPath            string
-	kubernetesNamespace string
-	kubernetesPodName   string
+	logLevel          string
+	backendLogLevel   string
+	serviceLogLevel   string
+	watcherLogLevel   string
+	etcdAddr          string
+	etcdEndpoints     []string
+	etcdPath          string
+	kubernetesPodName string
 	service.ServiceConfig
 }
 
@@ -83,8 +83,8 @@ func init() {
 	cmdMain.Flags().StringSliceVar(&globalFlags.etcdEndpoints, "etcd-endpoint", nil, "Etcd client endpoints")
 	cmdMain.Flags().StringVar(&globalFlags.etcdPath, "etcd-path", "", "Path into etcd namespace")
 	// Kubernetes backend
-	cmdMain.Flags().StringVar(&globalFlags.kubernetesNamespace, "kubernetes-namespace", "", "Namespace of current pod in Kubernetes")
-	cmdMain.Flags().StringVar(&globalFlags.kubernetesPodName, "kubernetes-podname", "", "Name of current pod in Kubernetes")
+	defaultPodName := os.Getenv("J2_POD_NAME")
+	cmdMain.Flags().StringVar(&globalFlags.kubernetesPodName, "kubernetes-podname", defaultPodName, "Name of current pod in Kubernetes")
 
 	cmdMain.Flags().IntVar(&globalFlags.SyncPort, "sync-port", defaultSyncPort, "Port for syncthing to listen on")
 	cmdMain.Flags().IntVar(&globalFlags.HttpPort, "http-port", defaultHttpPort, "Port for syncthing's GUI & REST to listen on")
@@ -124,13 +124,14 @@ func cmdMainRun(cmd *cobra.Command, args []string) {
 
 	// Prepare backend
 	var b backend.Backend
+	k8sNamespace := pkg.GetKubernetesNamespace()
 	useKubernetes := false
 	var err error
 	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" && os.Getenv("KUBERNETES_SERVICE_PORT") != "" &&
-		globalFlags.kubernetesNamespace != "" && globalFlags.kubernetesPodName != "" {
+		k8sNamespace != "" && globalFlags.kubernetesPodName != "" {
 		// Looks like we're running in Kubernetes, use the Kubernetes backend
 		labelSelectionValue := strings.TrimPrefix(strings.Replace(globalFlags.etcdPath, "/", "_", -1), "_")
-		b, err = backend.NewKubernetesBackend(logging.MustGetLogger(backendLogName), globalFlags.kubernetesNamespace, globalFlags.kubernetesPodName, labelSelectionValue)
+		b, err = backend.NewKubernetesBackend(logging.MustGetLogger(backendLogName), k8sNamespace, globalFlags.kubernetesPodName, labelSelectionValue)
 		if err != nil {
 			Exitf("Failed to create Kubernetes backend: %#v", err)
 		}
@@ -146,7 +147,7 @@ func cmdMainRun(cmd *cobra.Command, args []string) {
 	serviceLogger := logging.MustGetLogger(serviceLogName)
 	cfg := globalFlags.ServiceConfig
 	if useKubernetes {
-		cfg, err = service.UpdateConfigFromKubernetes(serviceLogger, globalFlags.ServiceConfig, globalFlags.kubernetesNamespace, globalFlags.kubernetesPodName)
+		cfg, err = service.UpdateConfigFromKubernetes(serviceLogger, globalFlags.ServiceConfig, k8sNamespace, globalFlags.kubernetesPodName)
 		if err != nil {
 			Exitf("Failed to update configuration from docker: %#v", err)
 		}
