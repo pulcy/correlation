@@ -30,7 +30,7 @@ import (
 
 const (
 	announceLabel                  = "pulcy.com/correlation"
-	announceRegistrationAnnotation = "pulcy.com/correlation/registration"
+	announceRegistrationAnnotation = "pulcy_com_correlation_registration"
 )
 
 type k8sBackend struct {
